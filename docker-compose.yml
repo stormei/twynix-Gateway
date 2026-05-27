@@ -1,0 +1,57 @@
+services:
+  twynix-gateway:
+    build: .
+    image: twynix/opcua-gateway:local
+    container_name: twynix-gateway
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: "production"
+      HEALTH_PORT: "8080"
+      CONFIG_PATH: "/data/config.json"
+      SQLITE_PATH: "/data/messages.db"
+      SQLITE_MAX_ROWS: "${SQLITE_MAX_ROWS:-50000}"
+      RPC_JOURNAL_PATH: "/data/rpc-journal.db"
+      RPC_JOURNAL_MAX_ROWS: "${RPC_JOURNAL_MAX_ROWS:-200000}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH is required}"
+      ADMIN_PASSWORD_HASH_FILE: "/data/admin-password-hash"
+      DEVICE_NAME: "${DEVICE_NAME:-Machine001}"
+      TB_MQTT_URL: "${TB_MQTT_URL:?TB_MQTT_URL is required}"
+      TB_ACCESS_TOKEN: "${TB_ACCESS_TOKEN:?TB_ACCESS_TOKEN is required}"
+      MQTT_CLIENT_ID: "${MQTT_CLIENT_ID:-twynix-gateway}"
+      MQTT_CLEAN_SESSION: "${MQTT_CLEAN_SESSION:-true}"
+      TB_MAPPED_DEVICE_TRANSPORT: "${TB_MAPPED_DEVICE_TRANSPORT:-gateway-api}"
+      TB_REJECT_UNAUTHORIZED: "${TB_REJECT_UNAUTHORIZED:-true}"
+      TB_TLS_CA: "${TB_TLS_CA:-}"
+      TB_TLS_CERT: "${TB_TLS_CERT:-}"
+      TB_TLS_KEY: "${TB_TLS_KEY:-}"
+      OPCUA_URL: "${OPCUA_URL:?OPCUA_URL is required}"
+      OPCUA_USERNAME: "${OPCUA_USERNAME:-}"
+      OPCUA_PASSWORD: "${OPCUA_PASSWORD:-}"
+      OPCUA_APPLICATION_URI: "${OPCUA_APPLICATION_URI:-urn:twynix:opcua-gateway:docker}"
+      OPCUA_SAMPLING_MS: "${OPCUA_SAMPLING_MS:-250}"
+      OPCUA_PUBLISHING_INTERVAL_MS: "${OPCUA_PUBLISHING_INTERVAL_MS:-1000}"
+      OPCUA_LIFETIME_COUNT: "${OPCUA_LIFETIME_COUNT:-60}"
+      OPCUA_MAX_KEEPALIVE_COUNT: "${OPCUA_MAX_KEEPALIVE_COUNT:-5}"
+      OPCUA_MAX_NOTIFICATIONS_PER_PUBLISH: "${OPCUA_MAX_NOTIFICATIONS_PER_PUBLISH:-100}"
+      OPCUA_MONITORED_ITEM_QUEUE_SIZE: "${OPCUA_MONITORED_ITEM_QUEUE_SIZE:-10}"
+      OPCUA_PUBLISH_REQUEST_PIPELINE: "${OPCUA_PUBLISH_REQUEST_PIPELINE:-1}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      WRITE_MIN_INTERVAL_MS: "${WRITE_MIN_INTERVAL_MS:-100}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      # Mount TLS files read-only if TB_TLS_CA/TB_TLS_CERT/TB_TLS_KEY point here.
+      - ./certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # If you connect to LAN devices by IP, host networking can be convenient on Linux.
+    # network_mode: host

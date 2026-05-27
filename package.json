@@ -1,0 +1,31 @@
+{
+  "name": "edge-gateway-ts",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "lint": "echo \"(add eslint if desired)\""
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "better-sqlite3": "^9.4.0",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "mqtt": "^5.3.3",
+    "node-opcua": "^2.130.0",
+    "winston": "^3.11.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/fs-extra": "^11.0.4",
+    "@types/yargs": "^17.0.32",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3"
+  }
+}

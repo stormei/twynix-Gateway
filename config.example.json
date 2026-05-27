@@ -1,0 +1,68 @@
+{
+  "deviceName": "Machine001",
+  "tb": {
+    "url": "mqtt://thingsboard.example.local:1883",
+    "accessToken": "REPLACE_WITH_GATEWAY_DEVICE_TOKEN",
+    "clientId": "twynix-gateway",
+    "qos": 1,
+    "tls": false,
+    "rejectUnauthorized": true,
+    "cleanSession": true,
+    "mappedDeviceTransport": "gateway-api",
+    "deviceCredentials": []
+  },
+  "opcua": {
+    "url": "opc.tcp://opcua.example.local:49320",
+    "username": "",
+    "password": "",
+    "subscribe": true,
+    "samplingMs": 250,
+    "publishingIntervalMs": 1000,
+    "lifetimeCount": 60,
+    "maxKeepAliveCount": 5,
+    "maxNotificationsPerPublish": 100,
+    "monitoredItemQueueSize": 10,
+    "publishRequestPipeline": 1,
+    "securityPolicy": "None",
+    "securityMode": "None",
+    "applicationUri": "urn:twynix:opcua-gateway:Machine001"
+  },
+  "mapping": [
+    {
+      "id": "example-temperature",
+      "name": "Temperature",
+      "key": "temperature",
+      "nodeId": "ns=2;s=Channel1.Device1.Temperature",
+      "type": "Double",
+      "writable": false,
+      "opcua": {
+        "endpointId": "default",
+        "nodeId": "ns=2;s=Channel1.Device1.Temperature",
+        "browsePath": "Channel1/Device1/Temperature",
+        "displayName": "Temperature",
+        "dataType": "Double",
+        "writable": false
+      },
+      "target": {
+        "mode": "gateway-device",
+        "telemetryKey": "temperature"
+      },
+      "read": {
+        "enabled": true,
+        "mode": "subscription",
+        "intervalMs": 1000
+      },
+      "write": {
+        "enabled": false,
+        "rpcMethod": "write_temperature",
+        "requireReadBack": true
+      }
+    }
+  ],
+  "sqlitePath": "/data/messages.db",
+  "sqliteMaxRows": 50000,
+  "rpcJournalPath": "/data/rpc-journal.db",
+  "rpcJournalMaxRows": 200000,
+  "logLevel": "info",
+  "writeMinIntervalMs": 100
+}
