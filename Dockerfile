@@ -20,6 +20,7 @@ ENV HEALTH_PORT=8080
 ENV CONFIG_PATH=/data/config.json
 ENV SQLITE_PATH=/data/messages.db
 ENV RPC_JOURNAL_PATH=/data/rpc-journal.db
+ENV LOG_DIR=/data/logs
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates tini \

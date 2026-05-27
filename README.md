@@ -47,6 +47,7 @@ The container stores mutable runtime state under `/data`:
 - `/data/config.json`
 - `/data/messages.db`
 - `/data/rpc-journal.db`
+- `/data/logs/gateway.log`
 
 Create your environment file:
 
@@ -81,6 +82,13 @@ Start the gateway:
 mkdir -p data certs
 docker compose up -d --build
 docker compose logs -f twynix-gateway
+```
+
+The admin UI includes an authenticated **Debug** page with redacted recent logs, runtime status, OPC UA diagnostics, MQTT status, and sanitized config metadata. The same data is available over authenticated endpoints:
+
+```text
+GET /api/debug
+GET /api/logs?limit=200&level=warn&q=opcua
 ```
 
 If you change the admin password from the UI while running Docker, the new hash is written to `/data/admin-password-hash` and will be reused on the next container restart.

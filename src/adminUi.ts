@@ -775,6 +775,124 @@ export function renderAdminUi(): string {
         line-height: 1.45;
       }
 
+      #debugDump {
+        max-height: 340px;
+        padding: 12px;
+        border-radius: 10px;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .debug-toolbar {
+        display: grid;
+        grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) 120px auto auto;
+        gap: 10px;
+        align-items: end;
+        margin-bottom: 12px;
+      }
+
+      .debug-toolbar label {
+        display: grid;
+        gap: 5px;
+        margin: 0;
+        color: var(--tx-muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .debug-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .debug-tile {
+        min-height: 88px;
+        padding: 12px;
+        border: 1px solid var(--tx-border-muted);
+        border-radius: 8px;
+        background: #fbfcfe;
+      }
+
+      .debug-tile-label {
+        color: var(--tx-muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+
+      .debug-tile-value {
+        margin-top: 8px;
+        color: var(--tx-text);
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .debug-tile-meta {
+        margin-top: 4px;
+        color: var(--tx-muted);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .log-list {
+        max-height: 520px;
+        overflow: auto;
+        border: 1px solid var(--tx-border-muted);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .log-entry {
+        display: grid;
+        grid-template-columns: 154px 66px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--tx-border-muted);
+        border-left: 3px solid transparent;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .log-entry:last-child {
+        border-bottom: 0;
+      }
+
+      .log-entry.error { border-left-color: var(--bad); }
+      .log-entry.warn { border-left-color: #d97706; }
+      .log-entry.info { border-left-color: #2563eb; }
+      .log-entry.debug { border-left-color: #6b7280; }
+
+      .log-ts,
+      .log-level {
+        color: var(--tx-muted);
+        white-space: nowrap;
+      }
+
+      .log-level {
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .log-message {
+        min-width: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      @media (max-width: 1100px) {
+        .debug-toolbar,
+        .debug-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
       #tab-status > .card + .card {
         margin-top: 12px;
       }
@@ -1122,6 +1240,11 @@ export function renderAdminUi(): string {
                           <span class="nav-menu-label">Security</span>
                         </span>
                       </button>
+                      <button class="nav-menu-item" data-tab="debug" type="button">
+                        <span class="nav-menu-text">
+                          <span class="nav-menu-label">Debug</span>
+                        </span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1396,6 +1519,58 @@ export function renderAdminUi(): string {
               </div>
             </div>
           </section>
+
+          <section id="tab-debug" class="hidden">
+            <div class="card">
+              <div class="card-body">
+              <div class="section-head">
+                <div>
+                  <h2 class="card-title mb-1">Debug console</h2>
+                  <p class="text-secondary mb-0">Runtime diagnostics and recent redacted logs from this gateway process.</p>
+                </div>
+              </div>
+              <div class="debug-toolbar">
+                <label>
+                  Level
+                  <select class="form-select" id="debugLogLevel">
+                    <option value="all">All levels</option>
+                    <option value="error">error</option>
+                    <option value="warn">warn</option>
+                    <option value="info">info</option>
+                    <option value="debug">debug</option>
+                  </select>
+                </label>
+                <label>
+                  Search
+                  <input class="form-control" id="debugLogSearch" placeholder="message, device, endpoint, request id..." />
+                </label>
+                <label>
+                  Limit
+                  <select class="form-select" id="debugLogLimit">
+                    <option value="100">100</option>
+                    <option value="200" selected>200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                  </select>
+                </label>
+                <button class="btn btn-outline-primary" id="refreshDebugBtn" type="button">Refresh</button>
+                <button class="btn btn-outline-secondary" id="copyDebugBtn" type="button">Copy JSON</button>
+              </div>
+              <div class="message" id="debugMessage"></div>
+              <div class="debug-grid" id="debugSummary"></div>
+              <div class="row row-cards">
+                <div class="col-lg-7">
+                  <h3 class="card-title mb-2">Recent logs</h3>
+                  <div class="log-list" id="logList"></div>
+                </div>
+                <div class="col-lg-5">
+                  <h3 class="card-title mb-2">Diagnostics JSON</h3>
+                  <pre id="debugDump">{}</pre>
+                </div>
+              </div>
+              </div>
+            </div>
+          </section>
         </main>
           </div>
         </div>
@@ -1474,7 +1649,8 @@ export function renderAdminUi(): string {
         browserChildren: new Map(),
         browserExpanded: new Set(),
         browserLoading: new Set(),
-        selectedBrowserNode: null
+        selectedBrowserNode: null,
+        debug: null
       };
 
       const els = {
@@ -1518,7 +1694,16 @@ export function renderAdminUi(): string {
         selectedNodeInfo: document.getElementById('selectedNodeInfo'),
         addTagModal: document.getElementById('addTagModal'),
         closeAddTagModal: document.getElementById('closeAddTagModal'),
-        cancelAddTagModal: document.getElementById('cancelAddTagModal')
+        cancelAddTagModal: document.getElementById('cancelAddTagModal'),
+        debugMessage: document.getElementById('debugMessage'),
+        debugSummary: document.getElementById('debugSummary'),
+        debugDump: document.getElementById('debugDump'),
+        logList: document.getElementById('logList'),
+        debugLogLevel: document.getElementById('debugLogLevel'),
+        debugLogSearch: document.getElementById('debugLogSearch'),
+        debugLogLimit: document.getElementById('debugLogLimit'),
+        refreshDebugBtn: document.getElementById('refreshDebugBtn'),
+        copyDebugBtn: document.getElementById('copyDebugBtn')
       };
 
       function syncTargetModeFields() {
@@ -1543,7 +1728,8 @@ export function renderAdminUi(): string {
         thingsboard: document.getElementById('tab-thingsboard'),
         opcua: document.getElementById('tab-opcua'),
         browser: document.getElementById('tab-browser'),
-        admin: document.getElementById('tab-admin')
+        admin: document.getElementById('tab-admin'),
+        debug: document.getElementById('tab-debug')
       };
 
       function setMessage(el, text, type) {
@@ -1584,6 +1770,9 @@ export function renderAdminUi(): string {
         }
         for (const [key, section] of Object.entries(tabSections)) {
           section.classList.toggle('hidden', key !== tab);
+        }
+        if (tab === 'debug') {
+          loadDebug().catch((error) => setMessage(els.debugMessage, error.message, 'error'));
         }
       }
 
@@ -1674,6 +1863,98 @@ export function renderAdminUi(): string {
         els.bufferedCount.textContent = String(status.mqtt.buffered ?? 0);
         els.rpcPending.textContent = String(status.rpc.pendingTotal ?? 0);
         els.statusDump.textContent = JSON.stringify(status, null, 2);
+      }
+
+      function formatMemory(bytes) {
+        const value = Number(bytes || 0);
+        if (value > 1024 * 1024) return Math.round(value / 1024 / 1024) + ' MB';
+        if (value > 1024) return Math.round(value / 1024) + ' KB';
+        return value + ' B';
+      }
+
+      function debugTile(label, value, meta) {
+        return '<div class="debug-tile">' +
+          '<div class="debug-tile-label">' + escapeHtml(label) + '</div>' +
+          '<div class="debug-tile-value">' + escapeHtml(value) + '</div>' +
+          '<div class="debug-tile-meta" title="' + escapeHtml(meta || '') + '">' + escapeHtml(meta || '') + '</div>' +
+        '</div>';
+      }
+
+      function renderLogMessage(entry) {
+        const message = typeof entry.message === 'string'
+          ? entry.message
+          : JSON.stringify(entry.message);
+        const metaKeys = entry.meta && Object.keys(entry.meta).length > 0
+          ? ' ' + JSON.stringify(entry.meta)
+          : '';
+        const stack = entry.stack ? '\\n' + entry.stack : '';
+        return message + metaKeys + stack;
+      }
+
+      function renderDebug() {
+        const debug = state.debug;
+        if (!debug) return;
+        const status = debug.status || {};
+        const processInfo = debug.process || {};
+        const memory = processInfo.memory || {};
+        const logsInfo = (debug.paths && debug.paths.logs) || {};
+        const opcDiagnostics = (status.opcua && status.opcua.diagnostics) || {};
+
+        els.debugSummary.innerHTML =
+          debugTile('Runtime', status.runtimeState || '-', 'uptime ' + (processInfo.uptimeSec || 0) + 's, pid ' + (processInfo.pid || '-')) +
+          debugTile('MQTT', status.mqtt && status.mqtt.connected ? 'Connected' : 'Offline', 'buffered ' + ((status.mqtt && status.mqtt.buffered) || 0)) +
+          debugTile('OPC UA', status.opcua && status.opcua.connected ? 'Connected' : 'Offline', 'subscription ' + (opcDiagnostics.subscriptionState || status.opcua?.subscription || '-')) +
+          debugTile('Logs', String((debug.logs || []).length), logsInfo.logFile || '');
+
+        const compactDebug = {
+          ok: debug.ok,
+          ts: debug.ts,
+          process: {
+            ...processInfo,
+            memory: {
+              rss: formatMemory(memory.rss),
+              heapUsed: formatMemory(memory.heapUsed),
+              heapTotal: formatMemory(memory.heapTotal)
+            }
+          },
+          paths: debug.paths,
+          status: debug.status,
+          config: debug.config
+        };
+        els.debugDump.textContent = JSON.stringify(compactDebug, null, 2);
+
+        const logs = debug.logs || [];
+        if (logs.length === 0) {
+          els.logList.innerHTML = '<div class="hint p-3">No matching logs in memory for this process.</div>';
+          return;
+        }
+        els.logList.innerHTML = logs.map((entry) => {
+          const level = String(entry.level || 'info');
+          return '<div class="log-entry ' + escapeHtml(level) + '">' +
+            '<div class="log-ts">' + escapeHtml(entry.ts || '') + '</div>' +
+            '<div class="log-level">' + escapeHtml(level) + '</div>' +
+            '<div class="log-message">' + escapeHtml(renderLogMessage(entry)) + '</div>' +
+          '</div>';
+        }).join('');
+      }
+
+      async function loadDebug() {
+        const params = new URLSearchParams();
+        params.set('level', els.debugLogLevel.value || 'all');
+        params.set('limit', els.debugLogLimit.value || '200');
+        const query = els.debugLogSearch.value.trim();
+        if (query) params.set('q', query);
+        state.debug = await api('/api/debug?' + params.toString());
+        renderDebug();
+        setMessage(els.debugMessage, '', '');
+      }
+
+      async function copyDebugPayload() {
+        if (!state.debug) {
+          await loadDebug();
+        }
+        await navigator.clipboard.writeText(JSON.stringify(state.debug, null, 2));
+        setMessage(els.debugMessage, 'Debug JSON copied.', 'success');
       }
 
       function escapeHtml(value) {
@@ -1848,6 +2129,31 @@ export function renderAdminUi(): string {
         state.browserExpanded.clear();
         state.browserNodes.clear();
         await loadBrowserNode('RootFolder');
+      });
+
+      els.refreshDebugBtn.addEventListener('click', async () => {
+        try {
+          await loadDebug();
+        } catch (error) {
+          setMessage(els.debugMessage, error.message, 'error');
+        }
+      });
+
+      els.copyDebugBtn.addEventListener('click', async () => {
+        try {
+          await copyDebugPayload();
+        } catch (error) {
+          setMessage(els.debugMessage, error.message, 'error');
+        }
+      });
+
+      els.debugLogLevel.addEventListener('change', () => loadDebug().catch((error) => setMessage(els.debugMessage, error.message, 'error')));
+      els.debugLogLimit.addEventListener('change', () => loadDebug().catch((error) => setMessage(els.debugMessage, error.message, 'error')));
+      els.debugLogSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          loadDebug().catch((error) => setMessage(els.debugMessage, error.message, 'error'));
+        }
       });
 
       els.closeAddTagModal.addEventListener('click', hideAddTagModal);

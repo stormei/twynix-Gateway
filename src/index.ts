@@ -2,12 +2,13 @@ import crypto from 'crypto';
 import http from 'http';
 import fs from 'fs-extra';
 import path from 'path';
-import { loadConfig } from './config.js';
+import { CONFIG_PATH, loadConfig } from './config.js';
 import { normalizeMapping } from './mapping.js';
 import { renderAdminUi } from './adminUi.js';
 import { readJsonBody, sendHtml, sendJson, sendText, parseCookies } from './httpServer.js';
-import { logger } from './logger.js';
+import { getLogCapabilities, getRecentLogs, logger, setRuntimeLogLevel } from './logger.js';
 import { GatewayRuntimeManager, mergeConfig } from './runtime/GatewayRuntime.js';
+import { sanitizedConfigSummary } from './status.js';
 import { DataTypeName, EdgeConfig } from './types.js';
 
 type SessionRecord = {
@@ -105,6 +106,39 @@ async function main() {
   (globalThis as any).lastMqttTs = Date.now();
   (globalThis as any).lastOpcTs = Date.now();
   const getStatusPayload = () => runtimeManager.getStatusPayload();
+  const getDebugPayload = (url: URL) => {
+    const snapshot = getStatusPayload();
+    return {
+      ok: snapshot.ok,
+      ts: Date.now(),
+      process: {
+        pid: process.pid,
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        uptimeSec: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+        cwd: process.cwd(),
+        env: {
+          nodeEnv: process.env.NODE_ENV || '',
+          healthPort: process.env.HEALTH_PORT || '',
+          configPath: process.env.CONFIG_PATH || CONFIG_PATH,
+          logLevel: process.env.LOG_LEVEL || ''
+        }
+      },
+      paths: {
+        configPath: CONFIG_PATH,
+        logs: getLogCapabilities()
+      },
+      status: snapshot,
+      config: sanitizedConfigSummary(runtimeManager.config),
+      logs: getRecentLogs({
+        limit: Number(url.searchParams.get('limit') || 200),
+        level: url.searchParams.get('level') || undefined,
+        q: url.searchParams.get('q') || undefined
+      })
+    };
+  };
 
   const createSession = (username: string) => {
     const token = crypto.randomBytes(24).toString('hex');
@@ -294,6 +328,34 @@ async function main() {
       if (method === 'GET' && pathname === '/api/status') {
         if (!requireAuth(req, res)) return;
         sendJson(res, 200, getStatusPayload());
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/logs') {
+        if (!requireAuth(req, res)) return;
+        sendJson(res, 200, {
+          capabilities: getLogCapabilities(),
+          logs: getRecentLogs({
+            limit: Number(url.searchParams.get('limit') || 200),
+            level: url.searchParams.get('level') || undefined,
+            q: url.searchParams.get('q') || undefined
+          })
+        });
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/debug') {
+        if (!requireAuth(req, res)) return;
+        sendJson(res, 200, getDebugPayload(url));
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/log-level') {
+        if (!requireAuth(req, res)) return;
+        const body = await readJsonBody(req);
+        const capabilities = setRuntimeLogLevel(String(body.level || '').trim());
+        logger.info({ msg: 'Runtime log level changed from admin UI', level: capabilities.currentLevel });
+        sendJson(res, 200, capabilities);
         return;
       }
 
