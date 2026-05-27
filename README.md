@@ -63,11 +63,13 @@ TB_ACCESS_TOKEN=YOUR_GATEWAY_DEVICE_TOKEN
 MQTT_CLIENT_ID=edge-gw-01
 OPCUA_URL=opc.tcp://YOUR_OPCUA_SERVER:49320
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD_HASH=...
 ADMIN_PASSWORD_HASH_FILE=/data/admin-password-hash
+ADMIN_PASSWORD=...
 ```
 
-Generate an admin password hash:
+For Docker you can either set `ADMIN_PASSWORD`, set `ADMIN_PASSWORD_HASH`, or leave both empty. If both are empty, the container generates a random admin password and prints it once in `docker compose logs`.
+
+If you want to generate a hash manually:
 
 ```bash
 node --input-type=module -e "import crypto from 'crypto'; const p=process.argv[1]; const s=crypto.randomBytes(16).toString('hex'); console.log('scrypt$'+s+'$'+crypto.scryptSync(p,s,64).toString('hex'))" 'ChangeMeInPoc123!'
@@ -82,6 +84,7 @@ docker compose logs -f twynix-gateway
 ```
 
 If you change the admin password from the UI while running Docker, the new hash is written to `/data/admin-password-hash` and will be reused on the next container restart.
+To reset a generated password, stop the container, delete `data/admin-password-hash`, and start it again.
 
 Open the local admin UI:
 

@@ -31,6 +31,7 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 
 COPY --from=build /app/dist ./dist
+COPY scripts ./scripts
 RUN chown -R node:node /app /data
 
 USER node
@@ -40,5 +41,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:${HEALTH_PORT:-8080}/readyz || exit 1
 
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "sh", "/app/scripts/docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]
