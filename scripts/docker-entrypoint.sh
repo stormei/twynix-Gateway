@@ -2,6 +2,13 @@
 set -eu
 
 hash_file="${ADMIN_PASSWORD_HASH_FILE:-/data/admin-password-hash}"
+run_as_node="false"
+
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /data /data/logs
+  chown -R node:node /data 2>/dev/null || true
+  run_as_node="true"
+fi
 
 mkdir -p "$(dirname "$hash_file")"
 
@@ -21,11 +28,13 @@ if [ -s "$hash_file" ]; then
 elif [ -n "${ADMIN_PASSWORD_HASH:-}" ]; then
   printf '%s\n' "$ADMIN_PASSWORD_HASH" > "$hash_file"
   chmod 600 "$hash_file" 2>/dev/null || true
+  chown node:node "$hash_file" 2>/dev/null || true
 elif [ -n "${ADMIN_PASSWORD:-}" ]; then
   ADMIN_PASSWORD_HASH="$(generate_hash "$ADMIN_PASSWORD")"
   export ADMIN_PASSWORD_HASH
   printf '%s\n' "$ADMIN_PASSWORD_HASH" > "$hash_file"
   chmod 600 "$hash_file" 2>/dev/null || true
+  chown node:node "$hash_file" 2>/dev/null || true
   echo "Generated admin password hash at $hash_file from ADMIN_PASSWORD."
 else
   ADMIN_PASSWORD="$(node --input-type=module -e "import crypto from 'crypto'; console.log(crypto.randomBytes(18).toString('base64url'))")"
@@ -34,10 +43,15 @@ else
   export ADMIN_PASSWORD_HASH
   printf '%s\n' "$ADMIN_PASSWORD_HASH" > "$hash_file"
   chmod 600 "$hash_file" 2>/dev/null || true
+  chown node:node "$hash_file" 2>/dev/null || true
   echo "Generated one-time gateway admin password: $ADMIN_PASSWORD"
   echo "Password hash stored at $hash_file. Save this password now or reset by deleting the hash file."
 fi
 
 unset ADMIN_PASSWORD
+
+if [ "$run_as_node" = "true" ]; then
+  exec gosu node "$@"
+fi
 
 exec "$@"

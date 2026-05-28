@@ -4,7 +4,6 @@ services:
     image: twynix/opcua-gateway:local
     container_name: twynix-gateway
     restart: unless-stopped
-    init: true
     env_file:
       - .env
     environment:

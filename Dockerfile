@@ -23,7 +23,7 @@ ENV RPC_JOURNAL_PATH=/data/rpc-journal.db
 ENV LOG_DIR=/data/logs
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates tini \
+  && apt-get install -y --no-install-recommends curl ca-certificates tini gosu \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /data \
   && chown -R node:node /app /data
@@ -34,8 +34,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY scripts ./scripts
 RUN chown -R node:node /app /data
-
-USER node
 
 # Default ports: health server (8080) and optional custom ports you expose externally
 EXPOSE 8080
