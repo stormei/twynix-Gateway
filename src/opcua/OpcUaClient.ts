@@ -205,10 +205,11 @@ export class OpcUaClient {
 
           await this.client.connect(this.cfg.url);
 
-          this.session = await this.client.createSession({
-            userName: this.cfg.username || undefined,
-            password: this.cfg.password || undefined
-          } as any);
+          const username = String(this.cfg.username || '').trim();
+          const password = String(this.cfg.password || '');
+          this.session = username || password
+            ? await this.client.createSession({ userName: username || undefined, password: password || undefined } as any)
+            : await this.client.createSession();
 
           logger.info({ msg: 'OPCUA connected' });
           this.lastError = undefined;
