@@ -8,7 +8,7 @@ import { renderAdminUi } from './adminUi.js';
 import { readJsonBody, sendHtml, sendJson, sendText, parseCookies } from './httpServer.js';
 import { getLogCapabilities, getRecentLogs, logger, setRuntimeLogLevel } from './logger.js';
 import { GatewayRuntimeManager, mergeConfig } from './runtime/GatewayRuntime.js';
-import { sanitizedConfigSummary } from './status.js';
+import { configVersion, sanitizedConfigSummary } from './status.js';
 import { DataTypeName, EdgeConfig } from './types.js';
 import { versionInfo } from './version.js';
 
@@ -104,6 +104,8 @@ async function main() {
 
   const runtimeManager = new GatewayRuntimeManager(await loadConfig());
   const version = versionInfo();
+  let savedConfigReconcileInFlight = false;
+  let savedConfigReconcileTimer: NodeJS.Timeout | undefined;
 
   (globalThis as any).lastMqttTs = Date.now();
   (globalThis as any).lastOpcTs = Date.now();
@@ -470,9 +472,51 @@ async function main() {
     }
   });
 
+  const reconcileSavedConfig = async () => {
+    if (savedConfigReconcileInFlight) return;
+    savedConfigReconcileInFlight = true;
+    try {
+      const storedConfig = await loadConfig();
+      const storedVersion = configVersion(storedConfig);
+      const managerVersion = configVersion(runtimeManager.config);
+      const activeVersion = runtimeManager.currentRuntime
+        ? configVersion(runtimeManager.currentRuntime.cfg)
+        : null;
+      const managerDiffers = storedVersion !== managerVersion;
+      const activeDiffers = runtimeManager.state === 'ready' && !!activeVersion && activeVersion !== storedVersion;
+
+      if (managerDiffers || activeDiffers) {
+        logger.warn({
+          msg: 'Saved config differs from active runtime; applying stored config',
+          storedVersion,
+          managerVersion,
+          activeVersion,
+          managerDiffers,
+          activeDiffers,
+          tbUrl: storedConfig.tb.url,
+          opcuaUrl: storedConfig.opcua.url
+        });
+        await runtimeManager.saveAndApplyConfig(storedConfig, 'saved-config-reconcile');
+      }
+    } catch (error: any) {
+      logger.error({ msg: 'Saved config reconcile failed', error: error?.message || String(error) });
+    } finally {
+      savedConfigReconcileInFlight = false;
+    }
+  };
+
+  const reconcileIntervalMs = Math.max(1000, Number(process.env.CONFIG_RECONCILE_INTERVAL_MS || 5000));
+
   server.listen(port, () => {
     logger.info({ msg: 'Gateway admin UI and health endpoints up', port });
   });
+
+  savedConfigReconcileTimer = setInterval(() => {
+    reconcileSavedConfig().catch((error: any) => {
+      logger.error({ msg: 'Saved config reconcile loop failed', error: error?.message || String(error) });
+    });
+  }, reconcileIntervalMs);
+  savedConfigReconcileTimer.unref?.();
 
   runtimeManager.start('startup')
     .then(() => runtimeManager.applyStartupDesiredConfig())
@@ -485,6 +529,7 @@ async function main() {
     if (shutdownStarted) return;
     shutdownStarted = true;
     logger.info({ msg: 'Shutting down' });
+    if (savedConfigReconcileTimer) clearInterval(savedConfigReconcileTimer);
     server.close();
     await runtimeManager.close();
     process.exit(0);

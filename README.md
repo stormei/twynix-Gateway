@@ -88,6 +88,8 @@ docker compose logs -f twynix-gateway
 
 The admin UI header shows the running version as `APP_VERSION+BUILD_SHA`. If the header still shows an old SHA after rebuild, the browser/container is not using the image you just built.
 
+The gateway also checks the saved `CONFIG_PATH` periodically, controlled by `CONFIG_RECONCILE_INTERVAL_MS`. If the file contains newer MQTT or OPC UA settings than the active runtime, it logs `Saved config differs from active runtime; applying stored config` and reapplies the stored config.
+
 The admin UI includes an authenticated **Debug** page with redacted recent logs, runtime status, OPC UA diagnostics, MQTT status, and sanitized config metadata. The same data is available over authenticated endpoints:
 
 ```text
