@@ -1748,6 +1748,12 @@ export function renderAdminUi(): string {
         if (response.status === 204) return null;
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
+          if (response.status === 401 && path !== '/api/login') {
+            state.config = null;
+            state.status = null;
+            showLogin();
+            setMessage(els.loginMessage, 'Session expired. Sign in again before saving settings.', 'error');
+          }
           throw new Error(data.error || ('Request failed: ' + response.status));
         }
         return data;
@@ -1761,6 +1767,16 @@ export function renderAdminUi(): string {
       function showApp() {
         els.loginView.classList.add('hidden');
         els.appView.classList.remove('hidden');
+      }
+
+      async function ensureConfigLoaded(messageEl) {
+        if (!state.config) {
+          await loadConfig();
+        }
+        if (!state.config) {
+          throw new Error('Config is not loaded. Sign in again and wait for the settings to load.');
+        }
+        return structuredClone(state.config);
       }
 
       function activateTab(tab) {
@@ -2221,20 +2237,20 @@ export function renderAdminUi(): string {
       els.tbForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         setMessage(els.tbMessage, '', '');
-        const next = structuredClone(state.config);
-        next.deviceName = document.getElementById('deviceName').value.trim();
-        next.logLevel = document.getElementById('logLevel').value;
-        next.writeMinIntervalMs = Number(document.getElementById('writeMinIntervalMs').value);
-        next.tb.url = document.getElementById('tbUrl').value.trim();
-        next.tb.accessToken = document.getElementById('tbAccessToken').value;
-        next.tb.clientId = document.getElementById('tbClientId').value.trim();
-        next.tb.qos = Number(document.getElementById('tbQos').value);
-        next.tb.caPath = document.getElementById('tbCaPath').value.trim();
-        next.tb.certPath = document.getElementById('tbCertPath').value.trim();
-        next.tb.keyPath = document.getElementById('tbKeyPath').value.trim();
-        next.tb.rejectUnauthorized = document.getElementById('tbRejectUnauthorized').checked;
-
         try {
+          const next = await ensureConfigLoaded(els.tbMessage);
+          next.deviceName = document.getElementById('deviceName').value.trim();
+          next.logLevel = document.getElementById('logLevel').value;
+          next.writeMinIntervalMs = Number(document.getElementById('writeMinIntervalMs').value);
+          next.tb.url = document.getElementById('tbUrl').value.trim();
+          next.tb.accessToken = document.getElementById('tbAccessToken').value;
+          next.tb.clientId = document.getElementById('tbClientId').value.trim();
+          next.tb.qos = Number(document.getElementById('tbQos').value);
+          next.tb.caPath = document.getElementById('tbCaPath').value.trim();
+          next.tb.certPath = document.getElementById('tbCertPath').value.trim();
+          next.tb.keyPath = document.getElementById('tbKeyPath').value.trim();
+          next.tb.rejectUnauthorized = document.getElementById('tbRejectUnauthorized').checked;
+
           state.config = await api('/api/config', {
             method: 'PUT',
             body: JSON.stringify(next)
@@ -2254,18 +2270,18 @@ export function renderAdminUi(): string {
       els.opcForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         setMessage(els.opcMessage, '', '');
-        const next = structuredClone(state.config);
-        next.opcua.url = document.getElementById('opcUrl').value.trim();
-        next.opcua.username = document.getElementById('opcUsername').value.trim();
-        next.opcua.password = document.getElementById('opcPassword').value;
-        next.opcua.samplingMs = Number(document.getElementById('opcSamplingMs').value);
-        next.opcua.securityPolicy = document.getElementById('opcSecurityPolicy').value;
-        next.opcua.securityMode = document.getElementById('opcSecurityMode').value;
-        next.opcua.certificateFile = document.getElementById('opcCertificateFile').value.trim();
-        next.opcua.privateKeyFile = document.getElementById('opcPrivateKeyFile').value.trim();
-        next.opcua.subscribe = document.getElementById('opcSubscribe').checked;
-
         try {
+          const next = await ensureConfigLoaded(els.opcMessage);
+          next.opcua.url = document.getElementById('opcUrl').value.trim();
+          next.opcua.username = document.getElementById('opcUsername').value.trim();
+          next.opcua.password = document.getElementById('opcPassword').value;
+          next.opcua.samplingMs = Number(document.getElementById('opcSamplingMs').value);
+          next.opcua.securityPolicy = document.getElementById('opcSecurityPolicy').value;
+          next.opcua.securityMode = document.getElementById('opcSecurityMode').value;
+          next.opcua.certificateFile = document.getElementById('opcCertificateFile').value.trim();
+          next.opcua.privateKeyFile = document.getElementById('opcPrivateKeyFile').value.trim();
+          next.opcua.subscribe = document.getElementById('opcSubscribe').checked;
+
           state.config = await api('/api/config', {
             method: 'PUT',
             body: JSON.stringify(next)
