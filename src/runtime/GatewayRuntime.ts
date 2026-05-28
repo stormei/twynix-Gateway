@@ -243,7 +243,14 @@ export class GatewayRuntimeManager {
 
   private async replaceRuntime(nextCfg: EdgeConfig, reason: string) {
     validateConfig(nextCfg);
-    logger.info({ msg: 'Applying runtime config', reason, deviceName: nextCfg.deviceName, ...mappedTargetSummary(nextCfg) });
+    logger.info({
+      msg: 'Applying runtime config',
+      reason,
+      deviceName: nextCfg.deviceName,
+      tbUrl: nextCfg.tb.url,
+      opcuaUrl: nextCfg.opcua.url,
+      ...mappedTargetSummary(nextCfg)
+    });
     this.runtimeState = 'starting';
     this.runtimeError = null;
 

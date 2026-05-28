@@ -112,17 +112,39 @@ export async function loadConfig(): Promise<EdgeConfig> {
     const cfg = buildDefaultConfig();
     validateConfig(cfg);
     await saveConfig(cfg);
+    logger.info({
+      msg: 'Config initialized from environment defaults',
+      path: CONFIG_PATH,
+      deviceName: cfg.deviceName,
+      tbUrl: cfg.tb.url,
+      opcuaUrl: cfg.opcua.url
+    });
     return cfg;
   }
   const cfg = normalizeConfig((await fs.readJson(CONFIG_PATH)) as EdgeConfig);
   validateConfig(cfg);
+  logger.info({
+    msg: 'Config loaded',
+    path: CONFIG_PATH,
+    deviceName: cfg.deviceName,
+    tbUrl: cfg.tb.url,
+    opcuaUrl: cfg.opcua.url,
+    mappingCount: cfg.mapping.length
+  });
   return cfg;
 }
 
 export async function saveConfig(cfg: EdgeConfig) {
   await fs.ensureDir(path.dirname(CONFIG_PATH));
   await fs.writeJson(CONFIG_PATH, cfg, { spaces: 2 });
-  logger.info({ msg: 'Config saved', path: CONFIG_PATH });
+  logger.info({
+    msg: 'Config saved',
+    path: CONFIG_PATH,
+    deviceName: cfg.deviceName,
+    tbUrl: cfg.tb.url,
+    opcuaUrl: cfg.opcua.url,
+    mappingCount: cfg.mapping.length
+  });
 }
 
 /**
