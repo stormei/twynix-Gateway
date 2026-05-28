@@ -369,8 +369,19 @@ async function main() {
         if (!requireAuth(req, res)) return;
         const nextCfg = (await readJsonBody(req)) as EdgeConfig;
         const normalized = mergeConfig(runtimeManager.config, nextCfg);
-        await runtimeManager.saveAndApplyConfig(normalized, 'admin-ui-save');
-        sendJson(res, 200, runtimeManager.config);
+        try {
+          await runtimeManager.saveAndApplyConfig(normalized, 'admin-ui-save');
+          sendJson(res, 200, runtimeManager.config);
+        } catch (error: any) {
+          if (error?.configSaved) {
+            sendJson(res, 202, {
+              ...runtimeManager.config,
+              runtimeApplyError: error?.message || String(error)
+            });
+            return;
+          }
+          throw error;
+        }
         return;
       }
 

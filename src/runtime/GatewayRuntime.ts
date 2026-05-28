@@ -135,24 +135,33 @@ export class GatewayRuntimeManager {
     nextCfg = normalizeEdgeConfig(nextCfg);
     validateConfig(nextCfg);
     rejectInvalidMappedTargets(nextCfg);
+    const previousCfg = this.cfg;
+    await saveConfig(nextCfg);
+    this.cfg = nextCfg;
 
     this.configUpdateChain = this.configUpdateChain
       .catch(() => undefined)
       .then(async () => {
-        const scope = this.runtime ? configRestartScope(this.cfg, nextCfg) : 'full';
-        this.runtimeState = 'starting';
-        this.runtimeError = null;
+        try {
+          const scope = this.runtime ? configRestartScope(previousCfg, nextCfg) : 'full';
+          this.runtimeState = 'starting';
+          this.runtimeError = null;
 
-        if (this.runtime && scope === 'hot') {
-          logger.info({ msg: 'Applying hot runtime config', reason, deviceName: nextCfg.deviceName, ...mappedTargetSummary(nextCfg) });
-          await this.runtime.updateConfigHot(nextCfg);
-          this.cfg = nextCfg;
-          this.runtimeState = 'ready';
-        } else {
-          await this.replaceRuntime(nextCfg, reason);
+          if (this.runtime && scope === 'hot') {
+            logger.info({ msg: 'Applying hot runtime config', reason, deviceName: nextCfg.deviceName, ...mappedTargetSummary(nextCfg) });
+            await this.runtime.updateConfigHot(nextCfg);
+            this.cfg = nextCfg;
+            this.runtimeState = 'ready';
+          } else {
+            await this.replaceRuntime(nextCfg, reason);
+          }
+        } catch (error: any) {
+          this.runtimeState = 'error';
+          this.runtimeError = error?.message || String(error);
+          error.configSaved = true;
+          logger.error({ msg: 'Saved config but runtime apply failed', reason, error: this.runtimeError });
+          throw error;
         }
-
-        await saveConfig(nextCfg);
       });
 
     await this.configUpdateChain;

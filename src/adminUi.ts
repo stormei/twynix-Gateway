@@ -2241,7 +2241,11 @@ export function renderAdminUi(): string {
           });
           renderConfig();
           await loadStatus();
-          setMessage(els.tbMessage, 'MQTT / ThingsBoard settings saved.', 'success');
+          if (state.config.runtimeApplyError) {
+            setMessage(els.tbMessage, 'Settings saved, but runtime apply failed: ' + state.config.runtimeApplyError, 'error');
+          } else {
+            setMessage(els.tbMessage, 'MQTT / ThingsBoard settings saved and applied.', 'success');
+          }
         } catch (error) {
           setMessage(els.tbMessage, error.message, 'error');
         }
@@ -2268,7 +2272,11 @@ export function renderAdminUi(): string {
           });
           renderConfig();
           await loadStatus();
-          setMessage(els.opcMessage, 'OPC UA settings saved.', 'success');
+          if (state.config.runtimeApplyError) {
+            setMessage(els.opcMessage, 'Settings saved, but runtime apply failed: ' + state.config.runtimeApplyError, 'error');
+          } else {
+            setMessage(els.opcMessage, 'OPC UA settings saved and applied.', 'success');
+          }
         } catch (error) {
           setMessage(els.opcMessage, error.message, 'error');
         }
