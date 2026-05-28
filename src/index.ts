@@ -3,6 +3,14 @@ import http from 'http';
 import fs from 'fs-extra';
 import path from 'path';
 import { CONFIG_PATH, loadConfig } from './config.js';
+import {
+  createLocalConfigBackup,
+  extractThingsBoardConfigBackup,
+  listLocalConfigBackups,
+  normalizeConfigBackupEnvelope,
+  readLocalConfigBackup,
+  thingsBoardConfigBackupAttributes
+} from './configBackup.js';
 import { normalizeMapping } from './mapping.js';
 import { renderAdminUi } from './adminUi.js';
 import { readJsonBody, sendHtml, sendJson, sendText, parseCookies } from './httpServer.js';
@@ -367,6 +375,140 @@ async function main() {
       if (method === 'GET' && pathname === '/api/config') {
         if (!requireAuth(req, res)) return;
         sendJson(res, 200, runtimeManager.config);
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/config/backups') {
+        if (!requireAuth(req, res)) return;
+        sendJson(res, 200, {
+          backupDir: process.env.CONFIG_BACKUP_DIR || path.join(path.dirname(CONFIG_PATH), 'backups'),
+          local: await listLocalConfigBackups()
+        });
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/config/backup/local') {
+        if (!requireAuth(req, res)) return;
+        const backup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-local-backup');
+        logger.info({ msg: 'Local config backup created', fileName: backup.fileName, configVersion: backup.configVersion });
+        sendJson(res, 200, { ok: true, backup });
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/config/backup/thingsboard') {
+        if (!requireAuth(req, res)) return;
+        const runtime = runtimeManager.currentRuntime;
+        if (!runtime) {
+          sendJson(res, 503, { error: runtimeManager.error || 'Runtime is not ready' });
+          return;
+        }
+        const envelope = normalizeConfigBackupEnvelope(runtimeManager.config);
+        const attrs = thingsBoardConfigBackupAttributes({
+          ...envelope,
+          source: 'admin-ui-thingsboard-backup',
+          createdAt: new Date().toISOString()
+        });
+        await runtime.tb.publishClientAttributes(attrs);
+        const metadata = attrs['edge.configBackupMeta'];
+        logger.info({ msg: 'ThingsBoard config backup published', configVersion: metadata.configVersion, hash: metadata.hash });
+        sendJson(res, 200, { ok: true, backup: metadata });
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/config/restore/local') {
+        if (!requireAuth(req, res)) return;
+        const body = await readJsonBody(req);
+        const fileName = String(body.fileName || '');
+        const envelope = await readLocalConfigBackup(fileName);
+        const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-restore-rollback');
+        try {
+          await runtimeManager.saveAndApplyConfig(envelope.config, 'admin-ui-local-restore');
+          logger.warn({
+            msg: 'Local config backup restored',
+            fileName,
+            configVersion: envelope.configVersion,
+            rollbackFileName: rollbackBackup.fileName
+          });
+          sendJson(res, 200, {
+            ok: true,
+            config: runtimeManager.config,
+            backup: {
+              fileName,
+              configVersion: envelope.configVersion,
+              hash: envelope.hash,
+              createdAt: envelope.createdAt
+            },
+            rollbackBackup
+          });
+        } catch (error: any) {
+          if (error?.configSaved) {
+            sendJson(res, 202, {
+              ok: false,
+              config: runtimeManager.config,
+              runtimeApplyError: error?.message || String(error),
+              rollbackBackup
+            });
+            return;
+          }
+          throw error;
+        }
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/config/restore/upload') {
+        if (!requireAuth(req, res)) return;
+        const body = await readJsonBody(req);
+        const envelope = normalizeConfigBackupEnvelope(body.backup || body.config || body);
+        const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-upload-restore-rollback');
+        try {
+          await runtimeManager.saveAndApplyConfig(envelope.config, 'admin-ui-upload-restore');
+          logger.warn({ msg: 'Uploaded config backup restored', configVersion: envelope.configVersion, rollbackFileName: rollbackBackup.fileName });
+          sendJson(res, 200, { ok: true, config: runtimeManager.config, backup: envelope, rollbackBackup });
+        } catch (error: any) {
+          if (error?.configSaved) {
+            sendJson(res, 202, {
+              ok: false,
+              config: runtimeManager.config,
+              runtimeApplyError: error?.message || String(error),
+              rollbackBackup
+            });
+            return;
+          }
+          throw error;
+        }
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/config/restore/thingsboard') {
+        if (!requireAuth(req, res)) return;
+        const runtime = runtimeManager.currentRuntime;
+        if (!runtime) {
+          sendJson(res, 503, { error: runtimeManager.error || 'Runtime is not ready' });
+          return;
+        }
+        const payload = await runtime.tb.requestConfigBackup();
+        const envelope = extractThingsBoardConfigBackup(payload);
+        if (!envelope) {
+          sendJson(res, 404, { error: 'No ThingsBoard config backup attribute found' });
+          return;
+        }
+        const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-thingsboard-restore-rollback');
+        try {
+          await runtimeManager.saveAndApplyConfig(envelope.config, 'admin-ui-thingsboard-restore');
+          logger.warn({ msg: 'ThingsBoard config backup restored', configVersion: envelope.configVersion, rollbackFileName: rollbackBackup.fileName });
+          sendJson(res, 200, { ok: true, config: runtimeManager.config, backup: envelope, rollbackBackup });
+        } catch (error: any) {
+          if (error?.configSaved) {
+            sendJson(res, 202, {
+              ok: false,
+              config: runtimeManager.config,
+              runtimeApplyError: error?.message || String(error),
+              rollbackBackup
+            });
+            return;
+          }
+          throw error;
+        }
         return;
       }
 

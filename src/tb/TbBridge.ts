@@ -146,10 +146,22 @@ export class TbBridge {
   }
 
   async requestDesiredConfig(timeoutMs = 8000): Promise<DesiredConfigUpdate | null> {
-    const reqId = String(this.attrRequestSeq++);
-    const payload = {
+    const response = await this.requestAttributes({
       sharedKeys: 'edge.desiredConfig,edge.desiredConfigVersion,edge'
-    };
+    }, timeoutMs, 'Shared attribute request failed');
+
+    if (!response) return null;
+    return extractDesiredConfigUpdate(response, 'shared-request');
+  }
+
+  async requestConfigBackup(timeoutMs = 8000): Promise<any | null> {
+    return this.requestAttributes({
+      clientKeys: 'edge.configBackup,edge.configBackupMeta,edge.configBackupVersion,edge.configBackupHash,edge.configBackupCreatedAt,edge'
+    }, timeoutMs, 'Config backup attribute request failed');
+  }
+
+  private async requestAttributes(payload: { clientKeys?: string; sharedKeys?: string }, timeoutMs: number, failureMessage: string) {
+    const reqId = String(this.attrRequestSeq++);
 
     const response = await new Promise<any>((resolve) => {
       const timer = setTimeout(() => {
@@ -166,13 +178,12 @@ export class TbBridge {
         .catch((error: any) => {
           clearTimeout(timer);
           this.attrWaiters.delete(reqId);
-          logger.error({ msg: 'Shared attribute request failed', error: error?.message || String(error) });
+          logger.error({ msg: failureMessage, error: error?.message || String(error) });
           resolve(null);
         });
     });
 
-    if (!response) return null;
-    return extractDesiredConfigUpdate(response, 'shared-request');
+    return response;
   }
 
   async publishTelemetry(values: Record<string, any>) {

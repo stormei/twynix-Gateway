@@ -1252,6 +1252,11 @@ export function renderAdminUi(): string {
                           <span class="nav-menu-label">Security</span>
                         </span>
                       </button>
+                      <button class="nav-menu-item" data-tab="backup" type="button">
+                        <span class="nav-menu-text">
+                          <span class="nav-menu-label">Backup / Restore</span>
+                        </span>
+                      </button>
                       <button class="nav-menu-item" data-tab="debug" type="button">
                         <span class="nav-menu-text">
                           <span class="nav-menu-label">Debug</span>
@@ -1532,6 +1537,56 @@ export function renderAdminUi(): string {
             </div>
           </section>
 
+          <section id="tab-backup" class="hidden">
+            <div class="card">
+              <div class="card-body">
+              <div class="section-head">
+                <div>
+                  <h2 class="card-title mb-1">Backup / restore</h2>
+                  <p class="text-secondary mb-0">Backups include the full gateway config, mappings, access token, and OPC UA credentials.</p>
+                </div>
+                <button class="btn btn-outline-primary" id="refreshBackupsBtn" type="button">Refresh</button>
+              </div>
+              <div class="row row-cards mb-3">
+                <div class="col-md-6">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <h3 class="card-title">Local file backup</h3>
+                      <p class="text-secondary">Stored in the mounted gateway data volume. A rollback backup is created before every restore.</p>
+                      <button class="btn btn-primary" id="createLocalBackupBtn" type="button">Create local backup</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <h3 class="card-title">ThingsBoard backup</h3>
+                      <p class="text-secondary">Pushes or pulls the full config as ThingsBoard client attributes on this gateway device.</p>
+                      <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-primary" id="pushTbBackupBtn" type="button">Push to ThingsBoard</button>
+                        <button class="btn btn-outline-primary" id="restoreTbBackupBtn" type="button">Restore from ThingsBoard</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="card mb-3">
+                <div class="card-body">
+                  <h3 class="card-title">Restore uploaded JSON</h3>
+                  <p class="text-secondary">Use a local backup file or a raw config JSON export.</p>
+                  <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <input class="form-control" id="backupUploadFile" type="file" accept="application/json,.json" style="max-width: 420px" />
+                    <button class="btn btn-outline-primary" id="restoreUploadBackupBtn" type="button">Restore uploaded JSON</button>
+                  </div>
+                </div>
+              </div>
+              <div class="message mb-3" id="backupMessage"></div>
+              <h3 class="card-title mb-2">Local backups</h3>
+              <div class="mapping-list" id="backupList"></div>
+              </div>
+            </div>
+          </section>
+
           <section id="tab-debug" class="hidden">
             <div class="card">
               <div class="card-body">
@@ -1664,7 +1719,8 @@ export function renderAdminUi(): string {
         browserExpanded: new Set(),
         browserLoading: new Set(),
         selectedBrowserNode: null,
-        debug: null
+        debug: null,
+        backups: null
       };
 
       const els = {
@@ -1693,6 +1749,14 @@ export function renderAdminUi(): string {
         tbMessage: document.getElementById('tbMessage'),
         opcMessage: document.getElementById('opcMessage'),
         passwordMessage: document.getElementById('passwordMessage'),
+        backupMessage: document.getElementById('backupMessage'),
+        backupList: document.getElementById('backupList'),
+        refreshBackupsBtn: document.getElementById('refreshBackupsBtn'),
+        createLocalBackupBtn: document.getElementById('createLocalBackupBtn'),
+        pushTbBackupBtn: document.getElementById('pushTbBackupBtn'),
+        restoreTbBackupBtn: document.getElementById('restoreTbBackupBtn'),
+        backupUploadFile: document.getElementById('backupUploadFile'),
+        restoreUploadBackupBtn: document.getElementById('restoreUploadBackupBtn'),
         browserMessage: document.getElementById('browserMessage'),
         browserTree: document.getElementById('browserTree'),
         mappingList: document.getElementById('mappingList'),
@@ -1744,6 +1808,7 @@ export function renderAdminUi(): string {
         opcua: document.getElementById('tab-opcua'),
         browser: document.getElementById('tab-browser'),
         admin: document.getElementById('tab-admin'),
+        backup: document.getElementById('tab-backup'),
         debug: document.getElementById('tab-debug')
       };
 
@@ -1785,6 +1850,7 @@ export function renderAdminUi(): string {
         state.config = null;
         state.status = null;
         state.debug = null;
+        state.backups = null;
         showLogin();
         setMessage(els.loginMessage, 'Session expired. Sign in again before saving settings.', 'error');
       }
@@ -1836,6 +1902,9 @@ export function renderAdminUi(): string {
         }
         if (tab === 'debug') {
           loadDebug().catch((error) => setMessage(els.debugMessage, error.message, 'error'));
+        }
+        if (tab === 'backup') {
+          loadBackups().catch((error) => setMessage(els.backupMessage, error.message, 'error'));
         }
       }
 
@@ -2023,6 +2092,115 @@ export function renderAdminUi(): string {
         setMessage(els.debugMessage, 'Debug JSON copied.', 'success');
       }
 
+      function renderBackups() {
+        const backups = (state.backups && state.backups.local) || [];
+        if (!backups.length) {
+          els.backupList.innerHTML = '<div class="hint">No local backups yet.</div>';
+          return;
+        }
+
+        els.backupList.innerHTML = backups.map((backup) => {
+          if (backup.invalid) {
+            return '<div class="mapping-item">' +
+              '<strong>' + escapeHtml(backup.fileName) + '</strong>' +
+              '<div class="hint">Invalid backup JSON</div>' +
+              '<div></div>' +
+            '</div>';
+          }
+          return '<div class="mapping-item">' +
+            '<strong>' + escapeHtml(backup.fileName) + '</strong>' +
+            '<div class="hint">' +
+              escapeHtml(backup.deviceName || '-') +
+              ' · ' + escapeHtml(backup.configVersion || '-') +
+              ' · mappings ' + escapeHtml(backup.mappingCount ?? '-') +
+              ' · ' + escapeHtml(backup.createdAt || backup.modifiedAt || '-') +
+            '</div>' +
+            '<div class="tree-meta">' +
+              '<button class="btn btn-outline-primary btn-sm" type="button" data-restore-backup="' + escapeHtml(backup.fileName) + '">Restore</button>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+
+        for (const button of els.backupList.querySelectorAll('[data-restore-backup]')) {
+          button.addEventListener('click', async () => {
+            const fileName = button.getAttribute('data-restore-backup');
+            if (!window.confirm('Restore ' + fileName + '? A rollback backup will be created first.')) return;
+            await restoreLocalBackup(fileName);
+          });
+        }
+      }
+
+      async function loadBackups() {
+        if (!state.authenticated) return;
+        state.backups = await api('/api/config/backups');
+        renderBackups();
+      }
+
+      async function afterRestoreResult(result, messagePrefix) {
+        if (result.config) {
+          state.config = result.config;
+          renderConfig();
+        } else {
+          await loadConfig();
+        }
+        await loadStatus();
+        await loadBackups();
+        if (result.runtimeApplyError) {
+          setMessage(els.backupMessage, messagePrefix + ' saved, but runtime apply failed: ' + result.runtimeApplyError, 'error');
+        } else {
+          setMessage(els.backupMessage, messagePrefix + ' restored and applied.', 'success');
+        }
+      }
+
+      async function createLocalBackup() {
+        const result = await api('/api/config/backup/local', { method: 'POST', body: '{}' });
+        await loadBackups();
+        setMessage(els.backupMessage, 'Local backup created: ' + result.backup.fileName, 'success');
+      }
+
+      async function pushThingsBoardBackup() {
+        const result = await api('/api/config/backup/thingsboard', { method: 'POST', body: '{}' });
+        setMessage(els.backupMessage, 'ThingsBoard backup pushed: ' + (result.backup.configVersion || result.backup.hash), 'success');
+      }
+
+      async function restoreLocalBackup(fileName) {
+        setMessage(els.backupMessage, '', '');
+        const result = await api('/api/config/restore/local', {
+          method: 'POST',
+          body: JSON.stringify({ fileName })
+        });
+        await afterRestoreResult(result, 'Local backup');
+      }
+
+      async function restoreThingsBoardBackup() {
+        if (!window.confirm('Restore config backup from ThingsBoard? A rollback backup will be created first.')) return;
+        setMessage(els.backupMessage, '', '');
+        const result = await api('/api/config/restore/thingsboard', { method: 'POST', body: '{}' });
+        await afterRestoreResult(result, 'ThingsBoard backup');
+      }
+
+      async function restoreUploadedBackup() {
+        const file = els.backupUploadFile.files && els.backupUploadFile.files[0];
+        if (!file) {
+          setMessage(els.backupMessage, 'Select a JSON backup file first.', 'error');
+          return;
+        }
+        if (!window.confirm('Restore uploaded JSON? A rollback backup will be created first.')) return;
+        const text = await file.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          setMessage(els.backupMessage, 'Uploaded file is not valid JSON.', 'error');
+          return;
+        }
+        const result = await api('/api/config/restore/upload', {
+          method: 'POST',
+          body: JSON.stringify({ backup: parsed })
+        });
+        await afterRestoreResult(result, 'Uploaded backup');
+      }
+
       function escapeHtml(value) {
         return String(value)
           .replaceAll('&', '&amp;')
@@ -2194,6 +2372,7 @@ export function renderAdminUi(): string {
         state.config = null;
         state.status = null;
         state.debug = null;
+        state.backups = null;
         showLogin();
       });
 
@@ -2229,6 +2408,47 @@ export function renderAdminUi(): string {
           await copyDebugPayload();
         } catch (error) {
           setMessage(els.debugMessage, error.message, 'error');
+        }
+      });
+
+      els.refreshBackupsBtn.addEventListener('click', async () => {
+        try {
+          await loadBackups();
+          setMessage(els.backupMessage, '', '');
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
+        }
+      });
+
+      els.createLocalBackupBtn.addEventListener('click', async () => {
+        try {
+          await createLocalBackup();
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
+        }
+      });
+
+      els.pushTbBackupBtn.addEventListener('click', async () => {
+        try {
+          await pushThingsBoardBackup();
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
+        }
+      });
+
+      els.restoreTbBackupBtn.addEventListener('click', async () => {
+        try {
+          await restoreThingsBoardBackup();
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
+        }
+      });
+
+      els.restoreUploadBackupBtn.addEventListener('click', async () => {
+        try {
+          await restoreUploadedBackup();
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
         }
       });
 
