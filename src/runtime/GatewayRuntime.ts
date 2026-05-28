@@ -374,6 +374,7 @@ export class GatewayRuntimeManager {
     const now = Date.now();
     const mqttFresh = now - (globalThis as any).lastMqttTs < 60000;
     const opcFresh = now - (globalThis as any).lastOpcTs < 60000;
+    const mqttDiagnostics = runtime.mqtt.getDiagnostics();
     const opcDiagnostics = runtime.opc.getDiagnostics();
 
     const snapshot = {
@@ -382,7 +383,8 @@ export class GatewayRuntimeManager {
       mqtt: {
         connected: runtime.mqtt.isConnected(),
         fresh: mqttFresh,
-        buffered: runtime.mqtt.getBufferedCount()
+        buffered: runtime.mqtt.getBufferedCount(),
+        diagnostics: mqttDiagnostics
       },
       opcua: {
         connected: runtime.opc.isConnected(),

@@ -50,6 +50,15 @@ export class MqttHandler {
   private timer?: NodeJS.Timeout;
   private connectListeners: Array<() => void | Promise<void>> = [];
   private lastPublishedTopic: string | null = null;
+  private lastEvent = 'initialized';
+  private lastEventAt = Date.now();
+  private lastError: string | null = null;
+  private lastDisconnectReasonCode: number | null = null;
+
+  private recordEvent(event: string) {
+    this.lastEvent = event;
+    this.lastEventAt = Date.now();
+  }
 
   constructor(opts: MqttOptions) {
     this.store = new MessageStore(opts.sqlitePath, opts.sqliteMaxRows);
@@ -80,6 +89,9 @@ export class MqttHandler {
 
     this.client.on('connect', (pkt) => {
       this.connected = true;
+      this.lastError = null;
+      this.lastDisconnectReasonCode = null;
+      this.recordEvent('connect');
       logger.info({ msg: 'MQTT connected', clientId: opts.clientId, url: opts.url, sessionPresent: pkt.sessionPresent });
       const subscriptions = this.subs.map((s) => new Promise<void>((resolve) => {
         this.client.subscribe(s.topic, { qos: this.qos }, (err) => {
@@ -103,21 +115,30 @@ export class MqttHandler {
         .catch((err) => logger.error({ msg: 'MQTT reconnect setup failed', err }));
     });
 
-    this.client.on('reconnect', () => logger.warn({ msg: 'MQTT reconnecting', clientId: opts.clientId, url: opts.url }));
+    this.client.on('reconnect', () => {
+      this.recordEvent('reconnect');
+      logger.warn({ msg: 'MQTT reconnecting', clientId: opts.clientId, url: opts.url });
+    });
     this.client.on('close', () => {
       this.connected = false;
+      this.recordEvent('close');
       logger.warn({ msg: 'MQTT closed', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('offline', () => {
       this.connected = false;
+      this.recordEvent('offline');
       logger.warn({ msg: 'MQTT offline', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('disconnect', (packet) => {
       this.connected = false;
+      this.lastDisconnectReasonCode = packet.reasonCode ?? null;
+      this.recordEvent('disconnect');
       logger.warn({ msg: 'MQTT disconnected by broker', clientId: opts.clientId, url: opts.url, reasonCode: packet.reasonCode, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('error', (err) => {
       this.connected = false;
+      this.lastError = err.message;
+      this.recordEvent('error');
       logger.error({ msg: 'MQTT error', clientId: opts.clientId, url: opts.url, error: err.message, lastPublishedTopic: this.lastPublishedTopic });
     });
 
@@ -215,6 +236,7 @@ export class MqttHandler {
     this.connectListeners = [];
     this.client.removeAllListeners();
     this.client.end(true);
+    this.recordEvent('ended');
     logger.info({ msg: 'MQTT handler closed', clientId: this.clientId, url: this.url });
     this.store.close();
   }
@@ -231,5 +253,20 @@ export class MqttHandler {
     } catch {
       return -1;
     }
+  }
+
+  getDiagnostics() {
+    return {
+      url: this.url,
+      clientId: this.clientId,
+      connected: this.connected,
+      ended: this.ended,
+      lastEvent: this.lastEvent,
+      lastEventAt: this.lastEventAt,
+      lastError: this.lastError,
+      lastDisconnectReasonCode: this.lastDisconnectReasonCode,
+      lastPublishedTopic: this.lastPublishedTopic,
+      buffered: this.getBufferedCount()
+    };
   }
 }

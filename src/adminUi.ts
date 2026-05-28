@@ -2307,22 +2307,26 @@ export function renderAdminUi(): string {
         event.preventDefault();
         setMessage(els.tbMessage, '', '');
         try {
-          const next = await ensureConfigLoaded(els.tbMessage);
-          next.deviceName = document.getElementById('deviceName').value.trim();
-          next.logLevel = document.getElementById('logLevel').value;
-          next.writeMinIntervalMs = Number(document.getElementById('writeMinIntervalMs').value);
-          next.tb.url = document.getElementById('tbUrl').value.trim();
-          next.tb.accessToken = document.getElementById('tbAccessToken').value;
-          next.tb.clientId = document.getElementById('tbClientId').value.trim();
-          next.tb.qos = Number(document.getElementById('tbQos').value);
-          next.tb.caPath = document.getElementById('tbCaPath').value.trim();
-          next.tb.certPath = document.getElementById('tbCertPath').value.trim();
-          next.tb.keyPath = document.getElementById('tbKeyPath').value.trim();
-          next.tb.rejectUnauthorized = document.getElementById('tbRejectUnauthorized').checked;
+          if (!state.authenticated) throw new AuthExpiredError();
+          const patch = {
+            deviceName: document.getElementById('deviceName').value.trim(),
+            logLevel: document.getElementById('logLevel').value,
+            writeMinIntervalMs: Number(document.getElementById('writeMinIntervalMs').value),
+            tb: {
+              url: document.getElementById('tbUrl').value.trim(),
+              accessToken: document.getElementById('tbAccessToken').value,
+              clientId: document.getElementById('tbClientId').value.trim(),
+              qos: Number(document.getElementById('tbQos').value),
+              caPath: document.getElementById('tbCaPath').value.trim(),
+              certPath: document.getElementById('tbCertPath').value.trim(),
+              keyPath: document.getElementById('tbKeyPath').value.trim(),
+              rejectUnauthorized: document.getElementById('tbRejectUnauthorized').checked
+            }
+          };
 
           state.config = await api('/api/config', {
             method: 'PUT',
-            body: JSON.stringify(next)
+            body: JSON.stringify(patch)
           });
           renderConfig();
           await loadStatus();
@@ -2340,20 +2344,24 @@ export function renderAdminUi(): string {
         event.preventDefault();
         setMessage(els.opcMessage, '', '');
         try {
-          const next = await ensureConfigLoaded(els.opcMessage);
-          next.opcua.url = document.getElementById('opcUrl').value.trim();
-          next.opcua.username = document.getElementById('opcUsername').value.trim();
-          next.opcua.password = document.getElementById('opcPassword').value;
-          next.opcua.samplingMs = Number(document.getElementById('opcSamplingMs').value);
-          next.opcua.securityPolicy = document.getElementById('opcSecurityPolicy').value;
-          next.opcua.securityMode = document.getElementById('opcSecurityMode').value;
-          next.opcua.certificateFile = document.getElementById('opcCertificateFile').value.trim();
-          next.opcua.privateKeyFile = document.getElementById('opcPrivateKeyFile').value.trim();
-          next.opcua.subscribe = document.getElementById('opcSubscribe').checked;
+          if (!state.authenticated) throw new AuthExpiredError();
+          const patch = {
+            opcua: {
+              url: document.getElementById('opcUrl').value.trim(),
+              username: document.getElementById('opcUsername').value.trim(),
+              password: document.getElementById('opcPassword').value,
+              samplingMs: Number(document.getElementById('opcSamplingMs').value),
+              securityPolicy: document.getElementById('opcSecurityPolicy').value,
+              securityMode: document.getElementById('opcSecurityMode').value,
+              certificateFile: document.getElementById('opcCertificateFile').value.trim(),
+              privateKeyFile: document.getElementById('opcPrivateKeyFile').value.trim(),
+              subscribe: document.getElementById('opcSubscribe').checked
+            }
+          };
 
           state.config = await api('/api/config', {
             method: 'PUT',
-            body: JSON.stringify(next)
+            body: JSON.stringify(patch)
           });
           renderConfig();
           await loadStatus();
