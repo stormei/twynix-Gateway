@@ -41,6 +41,8 @@ export class MqttHandler {
   private client!: MqttClient;
   private store: MessageStore;
   private qos: 0|1|2;
+  private url: string;
+  private clientId: string;
   private subs: Array<{ topic: string, handler: Handler }> = [];
   private flushing = false;
   private connected = false;
@@ -52,6 +54,8 @@ export class MqttHandler {
   constructor(opts: MqttOptions) {
     this.store = new MessageStore(opts.sqlitePath, opts.sqliteMaxRows);
     this.qos = opts.qos;
+    this.url = opts.url;
+    this.clientId = opts.clientId;
 
     const tls: any = {};
     if (opts.caPath) try { tls.ca = fs.readFileSync(opts.caPath); } catch {}
@@ -76,7 +80,7 @@ export class MqttHandler {
 
     this.client.on('connect', (pkt) => {
       this.connected = true;
-      logger.info({ msg: 'MQTT connected', sessionPresent: pkt.sessionPresent });
+      logger.info({ msg: 'MQTT connected', clientId: opts.clientId, url: opts.url, sessionPresent: pkt.sessionPresent });
       const subscriptions = this.subs.map((s) => new Promise<void>((resolve) => {
         this.client.subscribe(s.topic, { qos: this.qos }, (err) => {
           if (err) logger.error({ msg: 'MQTT subscribe failed', topic: s.topic, err });
@@ -99,22 +103,22 @@ export class MqttHandler {
         .catch((err) => logger.error({ msg: 'MQTT reconnect setup failed', err }));
     });
 
-    this.client.on('reconnect', () => logger.warn({ msg: 'MQTT reconnecting', clientId: opts.clientId }));
+    this.client.on('reconnect', () => logger.warn({ msg: 'MQTT reconnecting', clientId: opts.clientId, url: opts.url }));
     this.client.on('close', () => {
       this.connected = false;
-      logger.warn({ msg: 'MQTT closed', clientId: opts.clientId, lastPublishedTopic: this.lastPublishedTopic });
+      logger.warn({ msg: 'MQTT closed', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('offline', () => {
       this.connected = false;
-      logger.warn({ msg: 'MQTT offline', clientId: opts.clientId, lastPublishedTopic: this.lastPublishedTopic });
+      logger.warn({ msg: 'MQTT offline', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('disconnect', (packet) => {
       this.connected = false;
-      logger.warn({ msg: 'MQTT disconnected by broker', clientId: opts.clientId, reasonCode: packet.reasonCode, lastPublishedTopic: this.lastPublishedTopic });
+      logger.warn({ msg: 'MQTT disconnected by broker', clientId: opts.clientId, url: opts.url, reasonCode: packet.reasonCode, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('error', (err) => {
       this.connected = false;
-      logger.error({ msg: 'MQTT error', clientId: opts.clientId, error: err.message, lastPublishedTopic: this.lastPublishedTopic });
+      logger.error({ msg: 'MQTT error', clientId: opts.clientId, url: opts.url, error: err.message, lastPublishedTopic: this.lastPublishedTopic });
     });
 
     this.client.on('message', (topic, payload) => {
@@ -209,7 +213,9 @@ export class MqttHandler {
     if (this.timer) clearInterval(this.timer);
     this.subs = [];
     this.connectListeners = [];
-    this.client.end();
+    this.client.removeAllListeners();
+    this.client.end(true);
+    logger.info({ msg: 'MQTT handler closed', clientId: this.clientId, url: this.url });
     this.store.close();
   }
 
