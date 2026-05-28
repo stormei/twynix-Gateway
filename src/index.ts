@@ -95,7 +95,7 @@ async function main() {
     legacyPassword: adminPassword
   };
   const port = Number(process.env.HEALTH_PORT || 8080);
-  const secureCookies = process.env.NODE_ENV === 'production';
+  const secureCookies = process.env.ADMIN_COOKIE_SECURE === 'true';
   const sessionTtlMs = 1000 * 60 * 60 * 12;
   const sessions = new Map<string, SessionRecord>();
   const loginAttempts = new Map<string, LoginAttemptRecord>();

@@ -70,6 +70,8 @@ ADMIN_PASSWORD=...
 
 For Docker you can either set `ADMIN_PASSWORD`, set `ADMIN_PASSWORD_HASH`, or leave both empty. If both are empty, the container generates a random admin password and prints it once in `docker compose logs`.
 
+Leave `ADMIN_COOKIE_SECURE=false` when using the local admin UI over plain HTTP, for example `http://192.168.1.155:8080`. Set it to `true` only when the gateway is served behind HTTPS.
+
 If you want to generate a hash manually:
 
 ```bash
