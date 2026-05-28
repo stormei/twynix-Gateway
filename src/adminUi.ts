@@ -1655,6 +1655,8 @@ export function renderAdminUi(): string {
 
     <script>
       const state = {
+        authenticated: false,
+        authExpired: false,
         config: null,
         status: null,
         browserNodes: new Map(),
@@ -1752,6 +1754,13 @@ export function renderAdminUi(): string {
           (type === 'error' ? ' text-danger' : type === 'success' ? ' text-success' : '');
       }
 
+      class AuthExpiredError extends Error {
+        constructor() {
+          super('Session expired. Sign in again before saving settings.');
+          this.name = 'AuthExpiredError';
+        }
+      }
+
       async function api(path, options) {
         const response = await fetch(path, {
           credentials: 'same-origin',
@@ -1762,14 +1771,22 @@ export function renderAdminUi(): string {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (response.status === 401 && path !== '/api/login') {
-            state.config = null;
-            state.status = null;
-            showLogin();
-            setMessage(els.loginMessage, 'Session expired. Sign in again before saving settings.', 'error');
+            expireSession();
+            throw new AuthExpiredError();
           }
           throw new Error(data.error || ('Request failed: ' + response.status));
         }
         return data;
+      }
+
+      function expireSession() {
+        state.authenticated = false;
+        state.authExpired = true;
+        state.config = null;
+        state.status = null;
+        state.debug = null;
+        showLogin();
+        setMessage(els.loginMessage, 'Session expired. Sign in again before saving settings.', 'error');
       }
 
       function showLogin() {
@@ -1789,16 +1806,27 @@ export function renderAdminUi(): string {
       }
 
       async function ensureConfigLoaded(messageEl) {
+        if (!state.authenticated) {
+          throw new AuthExpiredError();
+        }
         if (!state.config) {
           await loadConfig();
         }
         if (!state.config) {
           throw new Error('Config is not loaded. Sign in again and wait for the settings to load.');
         }
-        return structuredClone(state.config);
+        const next = structuredClone(state.config);
+        next.tb = next.tb || {};
+        next.opcua = next.opcua || {};
+        next.mapping = Array.isArray(next.mapping) ? next.mapping : [];
+        return next;
       }
 
       function activateTab(tab) {
+        if (!state.authenticated && tab !== 'status') {
+          showLogin();
+          return;
+        }
         for (const button of tabButtons) {
           const active = button.dataset.tab === tab;
           button.classList.toggle('active', active);
@@ -1975,6 +2003,7 @@ export function renderAdminUi(): string {
       }
 
       async function loadDebug() {
+        if (!state.authenticated) return;
         const params = new URLSearchParams();
         params.set('level', els.debugLogLevel.value || 'all');
         params.set('limit', els.debugLogLimit.value || '200');
@@ -1986,6 +2015,7 @@ export function renderAdminUi(): string {
       }
 
       async function copyDebugPayload() {
+        if (!state.authenticated) throw new AuthExpiredError();
         if (!state.debug) {
           await loadDebug();
         }
@@ -2003,6 +2033,7 @@ export function renderAdminUi(): string {
       }
 
       async function loadBrowserNode(nodeId) {
+        if (!state.authenticated) return;
         state.browserLoading.add(nodeId);
         renderBrowserTree();
         try {
@@ -2116,18 +2147,22 @@ export function renderAdminUi(): string {
       }
 
       async function loadConfig() {
+        if (!state.authenticated) return;
         state.config = await api('/api/config');
         renderConfig();
       }
 
       async function loadStatus() {
+        if (!state.authenticated) return;
         state.status = await api('/api/status');
         renderStatus();
       }
 
       async function initAuthenticatedView() {
+        state.authenticated = true;
+        await loadConfig();
+        await loadStatus();
         showApp();
-        await Promise.all([loadConfig(), loadStatus()]);
         if (!state.browserChildren.has('RootFolder')) {
           await loadBrowserNode('RootFolder');
         }
@@ -2144,6 +2179,7 @@ export function renderAdminUi(): string {
               password: els.loginPassword.value
             })
           });
+          state.authExpired = false;
           els.loginPassword.value = '';
           await initAuthenticatedView();
         } catch (error) {
@@ -2153,14 +2189,27 @@ export function renderAdminUi(): string {
 
       els.logoutBtn.addEventListener('click', async () => {
         await api('/api/logout', { method: 'POST', body: '{}' });
+        state.authenticated = false;
+        state.authExpired = false;
+        state.config = null;
+        state.status = null;
+        state.debug = null;
         showLogin();
       });
 
       els.refreshStatusBtn.addEventListener('click', async () => {
-        await loadStatus();
+        try {
+          await loadStatus();
+        } catch (error) {
+          if (!(error instanceof AuthExpiredError)) setMessage(els.loginMessage, error.message, 'error');
+        }
       });
 
       els.refreshBrowserBtn.addEventListener('click', async () => {
+        if (!state.authenticated) {
+          expireSession();
+          return;
+        }
         state.browserChildren.clear();
         state.browserExpanded.clear();
         state.browserNodes.clear();
@@ -2246,7 +2295,7 @@ export function renderAdminUi(): string {
           hideAddTagModal();
           setMessage(els.browserMessage, 'Added ' + key + ' to config mapping.', 'success');
         } catch (error) {
-          setMessage(els.addTagMessage, error.message, 'error');
+          if (!(error instanceof AuthExpiredError)) setMessage(els.addTagMessage, error.message, 'error');
         }
       });
 
@@ -2283,7 +2332,7 @@ export function renderAdminUi(): string {
             setMessage(els.tbMessage, 'MQTT / ThingsBoard settings saved and applied.', 'success');
           }
         } catch (error) {
-          setMessage(els.tbMessage, error.message, 'error');
+          if (!(error instanceof AuthExpiredError)) setMessage(els.tbMessage, error.message, 'error');
         }
       });
 
@@ -2314,7 +2363,7 @@ export function renderAdminUi(): string {
             setMessage(els.opcMessage, 'OPC UA settings saved and applied.', 'success');
           }
         } catch (error) {
-          setMessage(els.opcMessage, error.message, 'error');
+          if (!(error instanceof AuthExpiredError)) setMessage(els.opcMessage, error.message, 'error');
         }
       });
 
@@ -2355,8 +2404,10 @@ export function renderAdminUi(): string {
           const session = await api('/api/session');
           renderVersion(session.version);
           if (session.authenticated) {
+            state.authExpired = false;
             await initAuthenticatedView();
           } else {
+            state.authenticated = false;
             showLogin();
           }
         } catch {
