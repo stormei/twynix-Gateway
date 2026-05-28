@@ -53,10 +53,9 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
   let telemetryPublisher = new TelemetryPublisher(mqtt, devices, tbGateway, activeCfg.tb.mappedDeviceTransport || 'gateway-api');
   const opc = new OpcUaClient(cfg.opcua);
   let statusInterval: NodeJS.Timeout | undefined;
+  let opcSetupGeneration = 0;
 
   try {
-    await opc.connect();
-
     const publishGatewayStatus = async (state = 'ready', runtimeError: string | null = null) => {
       await tb.publishTelemetry(gatewayStatusTelemetry(
         activeCfg,
@@ -69,21 +68,46 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       ));
     };
 
-    if (cfg.opcua.subscribe) {
+    const startOpcInBackground = (reason: string) => {
+      const generation = ++opcSetupGeneration;
       const readableMappings = activeCfg.mapping.filter((tag) => tag.read?.enabled !== false);
-      try {
-        await opc.subscribe(readableMappings, cfg.opcua.samplingMs, async (mapping, value) => {
-          try {
-            await telemetryPublisher.publish(mapping, { [mapping.key]: value });
-            (globalThis as any).lastOpcTs = Date.now();
-          } catch (error: any) {
-            logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: error?.message || String(error) });
-          }
+
+      const setup = activeCfg.opcua.subscribe
+        ? opc.subscribe(readableMappings, activeCfg.opcua.samplingMs, async (mapping, value) => {
+            try {
+              await telemetryPublisher.publish(mapping, { [mapping.key]: value });
+              (globalThis as any).lastOpcTs = Date.now();
+            } catch (error: any) {
+              logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: error?.message || String(error) });
+            }
+          })
+        : opc.connect();
+
+      setup
+        .then(async () => {
+          if (generation !== opcSetupGeneration) return;
+          logger.info({
+            msg: 'OPCUA background connection ready',
+            reason,
+            url: activeCfg.opcua.url,
+            subscribed: activeCfg.opcua.subscribe,
+            tags: readableMappings.length
+          });
+          await publishGatewayStatus();
+        })
+        .catch((error: any) => {
+          if (generation !== opcSetupGeneration) return;
+          logger.error({
+            msg: 'OPCUA background setup failed; runtime remains degraded',
+            reason,
+            url: activeCfg.opcua.url,
+            error: error?.message || String(error)
+          });
+          publishGatewayStatus('degraded', error?.message || String(error)).catch((statusError: any) => {
+            logger.warn({ msg: 'Gateway degraded status publish failed', error: statusError?.message || String(statusError) });
+          });
         });
-      } catch (error: any) {
-        logger.error({ msg: 'OPCUA subscription setup failed; runtime will continue degraded', error: error?.message || String(error) });
-      }
-    }
+    };
 
     let rpcExec = new RpcExecutor(activeCfg, opc, activeCfg.mapping, {
       writeTimeoutMs: 8000,
@@ -140,6 +164,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
 
     await tb.publishClientAttributes(gatewayIdentityAttributes(cfg));
     await publishGatewayStatus();
+    startOpcInBackground('startup');
 
     statusInterval = setInterval(() => {
       publishGatewayStatus().catch((error: any) => {
@@ -170,21 +195,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
           writeTimeoutMs: 8000,
           maxPendingTotal: 500
         });
-        if (activeCfg.opcua.subscribe) {
-          const readableMappings = activeCfg.mapping.filter((tag) => tag.read?.enabled !== false);
-          try {
-            await opc.subscribe(readableMappings, activeCfg.opcua.samplingMs, async (mapping, value) => {
-              try {
-                await telemetryPublisher.publish(mapping, { [mapping.key]: value });
-                (globalThis as any).lastOpcTs = Date.now();
-              } catch (error: any) {
-                logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: error?.message || String(error) });
-              }
-            });
-          } catch (error: any) {
-            logger.error({ msg: 'OPCUA hot subscription setup failed; runtime will continue degraded', error: error?.message || String(error) });
-          }
-        }
+        startOpcInBackground('hot-config-update');
         await tb.publishClientAttributes(gatewayIdentityAttributes(activeCfg));
         await publishGatewayStatus();
       },
