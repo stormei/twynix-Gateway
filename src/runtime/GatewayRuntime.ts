@@ -4,7 +4,7 @@ import type { MqttHandler } from '../mqtt/MqttHandler.js';
 import type { OpcUaClient } from '../opcua/OpcUaClient.js';
 import type { RpcExecutor } from '../rpc/RpcExecutor.js';
 import { configRestartScope } from '../runtimeConfig.js';
-import { configApplyStatus } from '../status.js';
+import { configApplyStatus, configVersion } from '../status.js';
 import type { DeviceSessionRegistry } from '../tb/DeviceSessionRegistry.js';
 import type { TbBridge } from '../tb/TbBridge.js';
 import { DesiredConfigUpdate, EdgeConfig } from '../types.js';
@@ -106,6 +106,9 @@ export class GatewayRuntimeManager {
   private runtimeState: GatewayRuntimeState = 'starting';
   private runtimeError: string | null = null;
   private configUpdateChain = Promise.resolve();
+  private retryTimer?: NodeJS.Timeout;
+  private retryDelayMs = 0;
+  private closed = false;
 
   constructor(private cfg: EdgeConfig) {
     validateConfig(cfg);
@@ -128,14 +131,19 @@ export class GatewayRuntimeManager {
   }
 
   async start(reason = 'startup') {
-    await this.replaceRuntime(this.cfg, reason);
+    try {
+      await this.replaceRuntime(this.cfg, reason);
+    } catch (error: any) {
+      this.scheduleRuntimeRetry(reason, error?.message || String(error));
+      throw error;
+    }
   }
 
   async saveAndApplyConfig(nextCfg: EdgeConfig, reason: string): Promise<EdgeConfig> {
     nextCfg = normalizeEdgeConfig(nextCfg);
     validateConfig(nextCfg);
     rejectInvalidMappedTargets(nextCfg);
-    const previousCfg = this.cfg;
+    const previousRuntimeCfg = this.runtime?.cfg || this.cfg;
     await saveConfig(nextCfg);
     this.cfg = nextCfg;
 
@@ -143,7 +151,7 @@ export class GatewayRuntimeManager {
       .catch(() => undefined)
       .then(async () => {
         try {
-          const scope = this.runtime ? configRestartScope(previousCfg, nextCfg) : 'full';
+          const scope = this.runtime ? configRestartScope(previousRuntimeCfg, nextCfg) : 'full';
           this.runtimeState = 'starting';
           this.runtimeError = null;
 
@@ -160,6 +168,7 @@ export class GatewayRuntimeManager {
           this.runtimeError = error?.message || String(error);
           error.configSaved = true;
           logger.error({ msg: 'Saved config but runtime apply failed', reason, error: this.runtimeError });
+          this.scheduleRuntimeRetry(reason, this.runtimeError || undefined);
           throw error;
         }
       });
@@ -225,11 +234,24 @@ export class GatewayRuntimeManager {
         configState: this.runtimeState,
         mappedDeviceTransport: this.cfg.tb.mappedDeviceTransport || 'gateway-api',
         mappedTargetDeviceCount: this.getMappedTargetDeviceCount(this.cfg)
+      },
+      config: {
+        desiredVersion: configVersion(this.cfg),
+        activeRuntimeVersion: null,
+        retryScheduled: !!this.retryTimer,
+        retryDelayMs: this.retryDelayMs,
+        tbUrl: this.cfg.tb.url,
+        opcuaUrl: this.cfg.opcua.url
       }
     };
   }
 
   async close() {
+    this.closed = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
     if (this.runtime) {
       await this.runtime.close();
       this.runtime = null;
@@ -243,10 +265,12 @@ export class GatewayRuntimeManager {
 
   private async replaceRuntime(nextCfg: EdgeConfig, reason: string) {
     validateConfig(nextCfg);
+    const desiredVersion = configVersion(nextCfg);
     logger.info({
       msg: 'Applying runtime config',
       reason,
       deviceName: nextCfg.deviceName,
+      desiredVersion,
       tbUrl: nextCfg.tb.url,
       opcuaUrl: nextCfg.opcua.url,
       ...mappedTargetSummary(nextCfg)
@@ -282,6 +306,18 @@ export class GatewayRuntimeManager {
       });
       this.runtimeState = 'ready';
       this.cfg = nextCfg;
+      this.retryDelayMs = 0;
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+      }
+      logger.info({
+        msg: 'Runtime config active',
+        reason,
+        activeRuntimeVersion: desiredVersion,
+        tbUrl: nextCfg.tb.url,
+        opcuaUrl: nextCfg.opcua.url
+      });
     } catch (error: any) {
       this.runtime = null;
       this.runtimeState = 'error';
@@ -289,6 +325,46 @@ export class GatewayRuntimeManager {
       logger.error({ msg: 'Runtime apply failed', reason, error: this.runtimeError });
       throw error;
     }
+  }
+
+  private scheduleRuntimeRetry(reason: string, error?: string) {
+    if (this.closed) return;
+
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+    }
+
+    this.retryDelayMs = this.retryDelayMs ? Math.min(this.retryDelayMs * 2, 60_000) : 5_000;
+    const desiredVersion = configVersion(this.cfg);
+    logger.warn({
+      msg: 'Scheduling runtime config retry',
+      reason,
+      desiredVersion,
+      delayMs: this.retryDelayMs,
+      tbUrl: this.cfg.tb.url,
+      opcuaUrl: this.cfg.opcua.url,
+      error
+    });
+
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.configUpdateChain = this.configUpdateChain
+        .catch(() => undefined)
+        .then(async () => {
+          logger.info({
+            msg: 'Retrying saved runtime config',
+            reason,
+            desiredVersion: configVersion(this.cfg),
+            tbUrl: this.cfg.tb.url,
+            opcuaUrl: this.cfg.opcua.url
+          });
+          await this.replaceRuntime(this.cfg, `${reason}-retry`);
+        })
+        .catch((retryError: any) => {
+          this.scheduleRuntimeRetry(reason, retryError?.message || String(retryError));
+        });
+    }, this.retryDelayMs);
+    this.retryTimer.unref?.();
   }
 
   private getHealthSnapshot(runtime: GatewayRuntime) {
@@ -334,6 +410,16 @@ export class GatewayRuntimeManager {
         snapshot.mqtt.fresh &&
         snapshot.opcua.connected &&
         snapshot.opcua.fresh,
+      config: {
+        desiredVersion: configVersion(this.cfg),
+        activeRuntimeVersion: configVersion(runtime.cfg),
+        retryScheduled: !!this.retryTimer,
+        retryDelayMs: this.retryDelayMs,
+        tbUrl: this.cfg.tb.url,
+        opcuaUrl: this.cfg.opcua.url,
+        activeTbUrl: runtime.cfg.tb.url,
+        activeOpcuaUrl: runtime.cfg.opcua.url
+      },
       ...snapshot
     };
   }
