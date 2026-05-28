@@ -1,6 +1,10 @@
 services:
   twynix-gateway:
-    build: .
+    build:
+      context: .
+      args:
+        APP_VERSION: "${APP_VERSION:-0.2.0}"
+        BUILD_SHA: "${BUILD_SHA:-local}"
     image: twynix/opcua-gateway:local
     container_name: twynix-gateway
     restart: unless-stopped

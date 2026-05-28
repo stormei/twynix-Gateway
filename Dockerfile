@@ -15,7 +15,11 @@ RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
+ARG APP_VERSION=0.2.0
+ARG BUILD_SHA=local
 ENV NODE_ENV=production
+ENV APP_VERSION=${APP_VERSION}
+ENV BUILD_SHA=${BUILD_SHA}
 ENV HEALTH_PORT=8080
 ENV CONFIG_PATH=/data/config.json
 ENV SQLITE_PATH=/data/messages.db

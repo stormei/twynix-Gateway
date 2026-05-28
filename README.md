@@ -80,9 +80,11 @@ Start the gateway:
 
 ```bash
 mkdir -p data certs
-docker compose up -d --build
+BUILD_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 docker compose logs -f twynix-gateway
 ```
+
+The admin UI header shows the running version as `APP_VERSION+BUILD_SHA`. If the header still shows an old SHA after rebuild, the browser/container is not using the image you just built.
 
 The admin UI includes an authenticated **Debug** page with redacted recent logs, runtime status, OPC UA diagnostics, MQTT status, and sanitized config metadata. The same data is available over authenticated endpoints:
 

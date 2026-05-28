@@ -10,6 +10,7 @@ import { getLogCapabilities, getRecentLogs, logger, setRuntimeLogLevel } from '.
 import { GatewayRuntimeManager, mergeConfig } from './runtime/GatewayRuntime.js';
 import { sanitizedConfigSummary } from './status.js';
 import { DataTypeName, EdgeConfig } from './types.js';
+import { versionInfo } from './version.js';
 
 type SessionRecord = {
   username: string;
@@ -102,6 +103,7 @@ async function main() {
   const loginBlockMs = 15 * 60 * 1000;
 
   const runtimeManager = new GatewayRuntimeManager(await loadConfig());
+  const version = versionInfo();
 
   (globalThis as any).lastMqttTs = Date.now();
   (globalThis as any).lastOpcTs = Date.now();
@@ -111,6 +113,7 @@ async function main() {
     return {
       ok: snapshot.ok,
       ts: Date.now(),
+      version,
       process: {
         pid: process.pid,
         nodeVersion: process.version,
@@ -233,7 +236,7 @@ async function main() {
 
       if (method === 'GET' && pathname === '/api/session') {
         const username = getAuthenticatedUser(req);
-        sendJson(res, 200, { authenticated: !!username, username: username || null });
+        sendJson(res, 200, { authenticated: !!username, username: username || null, version });
         return;
       }
 

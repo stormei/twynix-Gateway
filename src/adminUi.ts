@@ -767,6 +767,17 @@ export function renderAdminUi(): string {
         line-height: 1.35;
       }
 
+      .version-pill {
+        align-self: center;
+        padding: 4px 8px;
+        border: 1px solid rgba(255, 255, 255, .22);
+        border-radius: 999px;
+        color: rgba(255, 255, 255, .78);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
       #statusDump {
         max-height: 360px;
         padding: 12px;
@@ -1168,6 +1179,7 @@ export function renderAdminUi(): string {
             <div class="text-secondary" id="gatewaySubtitle">Live status and runtime configuration</div>
           </div>
           <div class="d-flex gap-2 ms-auto">
+            <span class="version-pill" id="appVersion">version unknown</span>
             <button class="btn btn-outline-primary" id="refreshStatusBtn" type="button">Refresh status</button>
             <button class="btn btn-outline-secondary" id="logoutBtn" type="button">Logout</button>
           </div>
@@ -1664,6 +1676,7 @@ export function renderAdminUi(): string {
         refreshStatusBtn: document.getElementById('refreshStatusBtn'),
         gatewayName: document.getElementById('gatewayName'),
         gatewaySubtitle: document.getElementById('gatewaySubtitle'),
+        appVersion: document.getElementById('appVersion'),
         overallStatus: document.getElementById('overallStatus'),
         mqttState: document.getElementById('mqttState'),
         mqttMeta: document.getElementById('mqttMeta'),
@@ -1767,6 +1780,12 @@ export function renderAdminUi(): string {
       function showApp() {
         els.loginView.classList.add('hidden');
         els.appView.classList.remove('hidden');
+      }
+
+      function renderVersion(info) {
+        if (!info) return;
+        els.appVersion.textContent = info.label || ((info.version || 'unknown') + '+' + (info.buildSha || 'local'));
+        els.appVersion.title = 'Gateway version ' + els.appVersion.textContent;
       }
 
       async function ensureConfigLoaded(messageEl) {
@@ -1879,6 +1898,7 @@ export function renderAdminUi(): string {
         els.bufferedCount.textContent = String(status.mqtt.buffered ?? 0);
         els.rpcPending.textContent = String(status.rpc.pendingTotal ?? 0);
         els.statusDump.textContent = JSON.stringify(status, null, 2);
+        renderVersion(status.version);
       }
 
       function formatMemory(bytes) {
@@ -2333,6 +2353,7 @@ export function renderAdminUi(): string {
         }
         try {
           const session = await api('/api/session');
+          renderVersion(session.version);
           if (session.authenticated) {
             await initAuthenticatedView();
           } else {

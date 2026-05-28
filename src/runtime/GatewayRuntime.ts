@@ -8,6 +8,7 @@ import { configApplyStatus, configVersion } from '../status.js';
 import type { DeviceSessionRegistry } from '../tb/DeviceSessionRegistry.js';
 import type { TbBridge } from '../tb/TbBridge.js';
 import { DesiredConfigUpdate, EdgeConfig } from '../types.js';
+import { versionInfo } from '../version.js';
 import { createGatewayRuntime } from './createGatewayRuntime.js';
 
 export function mergeConfig(current: EdgeConfig, patch: any): EdgeConfig {
@@ -201,6 +202,7 @@ export class GatewayRuntimeManager {
       return {
         runtimeState: this.runtimeState,
         runtimeError: this.runtimeError,
+        version: versionInfo(),
         ...this.getHealthSnapshot(this.runtime)
       };
     }
@@ -209,6 +211,7 @@ export class GatewayRuntimeManager {
       ok: false,
       runtimeState: this.runtimeState,
       runtimeError: this.runtimeError,
+      version: versionInfo(),
       ts: Date.now(),
       configPath: CONFIG_PATH,
       deviceName: this.cfg.deviceName,
