@@ -18,7 +18,8 @@ export type ConfigBackupEnvelope = {
   configVersion: string;
   hash: string;
   mappingCount: number;
-  containsSecrets: true;
+  containsSecrets: boolean;
+  redacted: boolean;
   config: EdgeConfig;
 };
 
@@ -43,8 +44,25 @@ function timestampFilePart(date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
-export function createConfigBackupEnvelope(cfg: EdgeConfig, source: string): ConfigBackupEnvelope {
-  const normalized = normalizeEdgeConfig(cfg);
+export function redactConfigSecrets(cfg: EdgeConfig): EdgeConfig {
+  const redacted = JSON.parse(JSON.stringify(cfg)) as EdgeConfig;
+  if (redacted.tb?.accessToken) redacted.tb.accessToken = '<redacted>';
+  if (Array.isArray(redacted.tb?.deviceCredentials)) {
+    redacted.tb.deviceCredentials = redacted.tb.deviceCredentials.map((credential) => ({
+      ...credential,
+      accessToken: credential.accessToken ? '<redacted>' : credential.accessToken
+    }));
+  }
+  if (redacted.opcua?.password) redacted.opcua.password = '<redacted>';
+  return redacted;
+}
+
+export function createConfigBackupEnvelope(
+  cfg: EdgeConfig,
+  source: string,
+  options: { redactSecrets?: boolean } = {}
+): ConfigBackupEnvelope {
+  const normalized = normalizeEdgeConfig(options.redactSecrets ? redactConfigSecrets(cfg) : cfg);
   validateConfig(normalized);
   return {
     schemaVersion: CONFIG_BACKUP_SCHEMA,
@@ -54,7 +72,8 @@ export function createConfigBackupEnvelope(cfg: EdgeConfig, source: string): Con
     configVersion: configVersion(normalized),
     hash: sha256(normalized),
     mappingCount: normalized.mapping.length,
-    containsSecrets: true,
+    containsSecrets: !options.redactSecrets,
+    redacted: !!options.redactSecrets,
     config: normalized
   };
 }
@@ -68,7 +87,8 @@ export function configBackupMetadata(envelope: ConfigBackupEnvelope) {
     configVersion: envelope.configVersion,
     hash: envelope.hash,
     mappingCount: envelope.mappingCount,
-    containsSecrets: envelope.containsSecrets
+    containsSecrets: envelope.containsSecrets,
+    redacted: envelope.redacted
   };
 }
 
@@ -89,9 +109,9 @@ export function thingsBoardConfigBackupAttributes(envelope: ConfigBackupEnvelope
   };
 }
 
-export async function createLocalConfigBackup(cfg: EdgeConfig, source: string) {
-  const envelope = createConfigBackupEnvelope(cfg, source);
-  const fileName = `config-${timestampFilePart()}-${envelope.configVersion}.json`;
+export async function createLocalConfigBackup(cfg: EdgeConfig, source: string, options: { redactSecrets?: boolean } = {}) {
+  const envelope = createConfigBackupEnvelope(cfg, source, options);
+  const fileName = `config${envelope.redacted ? '-redacted' : ''}-${timestampFilePart()}-${envelope.configVersion}.json`;
   const fullPath = path.join(backupDir(), fileName);
   await fs.ensureDir(path.dirname(fullPath));
   await fs.writeJson(fullPath, envelope, { spaces: 2 });
@@ -154,7 +174,8 @@ export function normalizeConfigBackupEnvelope(payload: any): ConfigBackupEnvelop
     configVersion: configVersion(cfg),
     hash: sha256(cfg),
     mappingCount: cfg.mapping.length,
-    containsSecrets: true,
+    containsSecrets: candidate.containsSecrets ?? true,
+    redacted: !!candidate.redacted,
     config: cfg
   };
 }

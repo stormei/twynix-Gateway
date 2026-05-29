@@ -14,9 +14,11 @@ const defaultMapping: TagSpec[] = [
 
 // Allow container/ops to mount a config file at a fixed path.
 export const CONFIG_PATH = path.resolve(process.env.CONFIG_PATH || './config.json');
+export const CONFIG_SCHEMA_VERSION = 'twynix.gateway.config.v1';
 
 function buildDefaultConfig(): EdgeConfig {
   return {
+    schemaVersion: CONFIG_SCHEMA_VERSION,
     deviceName: process.env.DEVICE_NAME || 'Machine001',
     tb: {
       url: process.env.TB_MQTT_URL || 'mqtts://tb.example.com:8883',
@@ -75,6 +77,7 @@ function normalizeConfig(cfg: EdgeConfig): EdgeConfig {
 
   return {
     ...cfg,
+    schemaVersion: typeof rawCfg.schemaVersion === 'string' ? rawCfg.schemaVersion : CONFIG_SCHEMA_VERSION,
     tb: {
       ...defaults.tb,
       ...cfg.tb,
@@ -165,6 +168,7 @@ export async function saveConfig(cfg: EdgeConfig) {
  */
 export function validateConfig(cfg: EdgeConfig) {
   if (!cfg || typeof cfg !== 'object') throw new Error('Config must be an object');
+  if (cfg.schemaVersion !== undefined && typeof cfg.schemaVersion !== 'string') throw new Error('schemaVersion must be a string');
   if (!cfg.deviceName || typeof cfg.deviceName !== 'string') throw new Error('deviceName is required');
   if (!cfg.tb || typeof cfg.tb !== 'object') throw new Error('tb section is required');
   if (!cfg.tb.url || typeof cfg.tb.url !== 'string') throw new Error('tb.url is required');

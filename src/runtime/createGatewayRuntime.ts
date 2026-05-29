@@ -57,6 +57,18 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
   const opc = new OpcUaClient(cfg.opcua);
   let statusInterval: NodeJS.Timeout | undefined;
   let opcSetupGeneration = 0;
+  const deliveryMetrics = {
+    opcSamplesReceived: 0,
+    telemetryPublishAttempts: 0,
+    telemetryPublishSuccess: 0,
+    telemetryPublishFailures: 0,
+    lastOpcSampleAt: null as number | null,
+    lastTelemetryPublishAt: null as number | null,
+    lastTelemetryPublishErrorAt: null as number | null,
+    lastTelemetryPublishError: null as string | null,
+    lastTelemetryKey: null as string | null,
+    lastTelemetryTarget: null as string | null
+  };
 
   try {
     const publishGatewayStatus = async (state = 'ready', runtimeError: string | null = null) => {
@@ -77,11 +89,23 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
 
       const setup = activeCfg.opcua.subscribe
         ? opc.subscribe(readableMappings, activeCfg.opcua.samplingMs, async (mapping, value) => {
+            const now = Date.now();
+            deliveryMetrics.opcSamplesReceived += 1;
+            deliveryMetrics.lastOpcSampleAt = now;
+            deliveryMetrics.telemetryPublishAttempts += 1;
+            deliveryMetrics.lastTelemetryKey = mapping.key;
+            deliveryMetrics.lastTelemetryTarget = mapping.target?.thingsBoardDeviceName || mapping.target?.thingsBoardDeviceId || activeCfg.deviceName;
             try {
               await telemetryPublisher.publish(mapping, { [mapping.key]: value });
+              deliveryMetrics.telemetryPublishSuccess += 1;
+              deliveryMetrics.lastTelemetryPublishAt = Date.now();
+              deliveryMetrics.lastTelemetryPublishError = null;
               (globalThis as any).lastOpcTs = Date.now();
             } catch (error: any) {
-              logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: error?.message || String(error) });
+              deliveryMetrics.telemetryPublishFailures += 1;
+              deliveryMetrics.lastTelemetryPublishErrorAt = Date.now();
+              deliveryMetrics.lastTelemetryPublishError = error?.message || String(error);
+              logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: deliveryMetrics.lastTelemetryPublishError });
             }
           })
         : opc.connect();
@@ -182,6 +206,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       tb,
       opc,
       getRpcStats: () => rpcExec.getStats(),
+      getDeliveryMetrics: () => ({ ...deliveryMetrics }),
       updateConfigHot: async (nextCfg: EdgeConfig) => {
         activeCfg = nextCfg;
         runtimeObject.cfg = nextCfg;

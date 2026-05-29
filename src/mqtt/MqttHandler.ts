@@ -60,6 +60,27 @@ export class MqttHandler {
   private flushBatchSize: number;
   private flushDelayMs: number;
   private flushIntervalMs: number;
+  private metrics = {
+    publishAttempts: 0,
+    publishSuccess: 0,
+    publishFailures: 0,
+    bufferedAdded: 0,
+    bufferedPurged: 0,
+    bufferedDroppedEphemeral: 0,
+    bufferedFlushed: 0,
+    flushRuns: 0,
+    flushFailures: 0,
+    lastFlushStartedAt: null as number | null,
+    lastFlushFinishedAt: null as number | null,
+    lastFlushDurationMs: null as number | null,
+    lastFlushPublished: 0,
+    lastFlushRatePerSec: 0,
+    connects: 0,
+    reconnects: 0,
+    closes: 0,
+    offlineEvents: 0,
+    errors: 0
+  };
 
   private recordEvent(event: string) {
     this.lastEvent = event;
@@ -97,6 +118,7 @@ export class MqttHandler {
     });
 
     this.client.on('connect', (pkt) => {
+      this.metrics.connects += 1;
       this.connected = true;
       this.lastError = null;
       this.lastDisconnectReasonCode = null;
@@ -125,15 +147,18 @@ export class MqttHandler {
     });
 
     this.client.on('reconnect', () => {
+      this.metrics.reconnects += 1;
       this.recordEvent('reconnect');
       logger.warn({ msg: 'MQTT reconnecting', clientId: opts.clientId, url: opts.url });
     });
     this.client.on('close', () => {
+      this.metrics.closes += 1;
       this.connected = false;
       this.recordEvent('close');
       logger.warn({ msg: 'MQTT closed', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('offline', () => {
+      this.metrics.offlineEvents += 1;
       this.connected = false;
       this.recordEvent('offline');
       logger.warn({ msg: 'MQTT offline', clientId: opts.clientId, url: opts.url, lastPublishedTopic: this.lastPublishedTopic });
@@ -145,6 +170,7 @@ export class MqttHandler {
       logger.warn({ msg: 'MQTT disconnected by broker', clientId: opts.clientId, url: opts.url, reasonCode: packet.reasonCode, lastPublishedTopic: this.lastPublishedTopic });
     });
     this.client.on('error', (err) => {
+      this.metrics.errors += 1;
       this.connected = false;
       this.lastError = err.message;
       this.recordEvent('error');
@@ -177,6 +203,7 @@ export class MqttHandler {
   }
 
   async publish(topic: string, payload: string, priority = false) {
+    this.metrics.publishAttempts += 1;
     if (this.ended) {
       logger.warn({ msg: 'MQTT publish skipped after handler closed', topic });
       return;
@@ -184,23 +211,33 @@ export class MqttHandler {
     const priorityFlag = !!priority;
     if (!this.connected) {
       if (isEphemeralTopic(topic)) {
+        this.metrics.bufferedDroppedEphemeral += 1;
         logger.warn({ msg: 'Dropping MQTT publish because topic cannot be safely buffered', topic });
         return;
       }
-      this.store.add({ topic, payload, ts: Date.now() });
+      this.bufferMessage(topic, payload);
       return;
     }
     await new Promise<void>((resolve) => {
       this.lastPublishedTopic = topic;
       this.client.publish(topic, payload, { qos: this.qos }, (err) => {
         if (err) {
+          this.metrics.publishFailures += 1;
           logger.error({ msg: 'publish failed, buffering', topic, err });
-          if (!this.ended) this.store.add({ topic, payload, ts: Date.now() });
+          if (!this.ended) this.bufferMessage(topic, payload);
+        } else {
+          this.metrics.publishSuccess += 1;
         }
         resolve();
       });
     });
     if (priorityFlag) await this.flushOnce();
+  }
+
+  private bufferMessage(topic: string, payload: string) {
+    const result = this.store.add({ topic, payload, ts: Date.now() });
+    this.metrics.bufferedAdded += 1;
+    this.metrics.bufferedPurged += result.purged;
   }
 
   private async delay(ms: number) {
@@ -211,6 +248,9 @@ export class MqttHandler {
   private async flushOnce(batchSize = this.flushBatchSize) {
     if (this.ended || this.flushing || !this.connected) return;
     this.flushing = true;
+    this.metrics.flushRuns += 1;
+    const startedAt = Date.now();
+    this.metrics.lastFlushStartedAt = startedAt;
     let published = 0;
     try {
       let batch: BufferedMessage[] = this.store.getBatch(batchSize);
@@ -218,6 +258,7 @@ export class MqttHandler {
         await Promise.all(batch.map(m => new Promise<void>((res) => {
           if (isEphemeralTopic(m.topic)) {
             if (m.id && !this.ended) this.store.remove(m.id);
+            this.metrics.bufferedDroppedEphemeral += 1;
             logger.warn({ msg: 'Dropping stale buffered MQTT message', topic: m.topic, id: m.id });
             res();
             return;
@@ -227,8 +268,12 @@ export class MqttHandler {
             if (!err && m.id && !this.ended) {
               this.store.remove(m.id);
               published += 1;
+              this.metrics.bufferedFlushed += 1;
             }
-            if (err) logger.error({ msg: 'flush publish failed, will retry later', id: m.id, err });
+            if (err) {
+              this.metrics.flushFailures += 1;
+              logger.error({ msg: 'flush publish failed, will retry later', id: m.id, err });
+            }
             res();
           });
         })));
@@ -244,6 +289,12 @@ export class MqttHandler {
         flushDelayMs: this.flushDelayMs
       });
     } finally {
+      const finishedAt = Date.now();
+      const durationMs = Math.max(0, finishedAt - startedAt);
+      this.metrics.lastFlushFinishedAt = finishedAt;
+      this.metrics.lastFlushDurationMs = durationMs;
+      this.metrics.lastFlushPublished = published;
+      this.metrics.lastFlushRatePerSec = durationMs > 0 ? Math.round((published / durationMs) * 100000) / 100 : published;
       this.flushing = false;
     }
   }
@@ -293,10 +344,35 @@ export class MqttHandler {
       lastDisconnectReasonCode: this.lastDisconnectReasonCode,
       lastPublishedTopic: this.lastPublishedTopic,
       buffered: this.getBufferedCount(),
+      buffer: this.getBufferStats(),
       flushBatchSize: this.flushBatchSize,
       flushDelayMs: this.flushDelayMs,
       flushIntervalMs: this.flushIntervalMs,
-      flushing: this.flushing
+      flushing: this.flushing,
+      metrics: { ...this.metrics },
+      replay: {
+        configuredApproxMaxRatePerSec: this.flushDelayMs > 0
+          ? Math.round((this.flushBatchSize / this.flushDelayMs) * 100000) / 100
+          : null,
+        lastFlushDurationMs: this.metrics.lastFlushDurationMs,
+        lastFlushPublished: this.metrics.lastFlushPublished,
+        lastFlushRatePerSec: this.metrics.lastFlushRatePerSec
+      }
     };
+  }
+
+  getBufferStats() {
+    try {
+      return this.store.stats();
+    } catch {
+      return {
+        count: -1,
+        oldestTs: null,
+        newestTs: null,
+        oldestAgeMs: null,
+        newestAgeMs: null,
+        payloadBytes: 0
+      };
+    }
   }
 }

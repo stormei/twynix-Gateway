@@ -16,6 +16,7 @@ export class MessageStore {
   private selectStmt;
   private deleteStmt;
   private countStmt;
+  private statsStmt;
   private purgeStmt;
   private maxRows: number;
 
@@ -34,6 +35,7 @@ export class MessageStore {
     this.selectStmt = this.db.prepare('SELECT id, topic, payload, ts FROM messages ORDER BY id ASC LIMIT ?');
     this.deleteStmt = this.db.prepare('DELETE FROM messages WHERE id = ?');
     this.countStmt = this.db.prepare('SELECT COUNT(*) as c FROM messages');
+    this.statsStmt = this.db.prepare('SELECT COUNT(*) as c, MIN(ts) as oldestTs, MAX(ts) as newestTs, SUM(LENGTH(payload)) as payloadBytes FROM messages');
     this.purgeStmt = this.db.prepare('DELETE FROM messages WHERE id IN (SELECT id FROM messages ORDER BY id ASC LIMIT ?)');
     logger.info({ msg: 'SQLite store ready', dbPath, maxRows });
   }
@@ -43,14 +45,34 @@ export class MessageStore {
     return row.c as number;
   }
 
+  stats() {
+    const row = this.statsStmt.get() as any;
+    const now = Date.now();
+    const count = Number(row.c || 0);
+    const oldestTs = row.oldestTs == null ? null : Number(row.oldestTs);
+    const newestTs = row.newestTs == null ? null : Number(row.newestTs);
+    return {
+      count,
+      oldestTs,
+      newestTs,
+      oldestAgeMs: oldestTs == null ? null : Math.max(0, now - oldestTs),
+      newestAgeMs: newestTs == null ? null : Math.max(0, now - newestTs),
+      payloadBytes: Number(row.payloadBytes || 0),
+      maxRows: this.maxRows
+    };
+  }
+
   add(msg: BufferedMessage) {
     const c = this.count();
+    let purged = 0;
     if (c >= this.maxRows) {
       const toDelete = Math.ceil(this.maxRows * 0.1); // purge oldest 10%
       const info = this.purgeStmt.run(toDelete);
+      purged = Number(info.changes || 0);
       logger.warn({ msg: 'Purged buffered messages to respect maxRows', deleted: info.changes });
     }
     this.insertStmt.run(msg.topic, msg.payload, msg.ts ?? Date.now());
+    return { purged };
   }
 
   getBatch(limit: number): BufferedMessage[] {

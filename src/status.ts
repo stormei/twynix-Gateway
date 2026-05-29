@@ -8,6 +8,7 @@ export function configVersion(cfg: EdgeConfig): string {
 
 export function sanitizedConfigSummary(cfg: EdgeConfig) {
   return {
+    schemaVersion: cfg.schemaVersion,
     deviceName: cfg.deviceName,
     tb: {
       url: cfg.tb.url,

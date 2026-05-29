@@ -1634,7 +1634,10 @@ export function renderAdminUi(): string {
                     <div class="card-body">
                       <h3 class="card-title">Local file backup</h3>
                       <p class="text-secondary">Stored in the mounted gateway data volume. A rollback backup is created before every restore.</p>
-                      <button class="btn btn-primary" id="createLocalBackupBtn" type="button">Create local backup</button>
+                      <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-primary" id="createLocalBackupBtn" type="button">Create local backup</button>
+                        <button class="btn btn-outline-primary" id="createRedactedLocalBackupBtn" type="button">Create redacted export</button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1842,6 +1845,7 @@ export function renderAdminUi(): string {
         backupList: document.getElementById('backupList'),
         refreshBackupsBtn: document.getElementById('refreshBackupsBtn'),
         createLocalBackupBtn: document.getElementById('createLocalBackupBtn'),
+        createRedactedLocalBackupBtn: document.getElementById('createRedactedLocalBackupBtn'),
         pushTbBackupBtn: document.getElementById('pushTbBackupBtn'),
         restoreTbBackupBtn: document.getElementById('restoreTbBackupBtn'),
         backupUploadFile: document.getElementById('backupUploadFile'),
@@ -2077,7 +2081,7 @@ export function renderAdminUi(): string {
       function renderStatus() {
         const status = state.status;
         if (!status) return;
-        const overall = status.ok ? 'Healthy' : 'Attention';
+        const overall = status.healthState || (status.ok ? 'Healthy' : 'Attention');
         els.overallStatus.textContent = overall;
         els.overallStatus.className = 'status-pill ' + (status.ok ? 'status-ok' : 'status-bad');
 
@@ -2102,12 +2106,25 @@ export function renderAdminUi(): string {
         const batchSize = Number(diagnostics.flushBatchSize || state.config?.mqttFlushBatchSize || 200);
         const delayMs = Number(diagnostics.flushDelayMs ?? state.config?.mqttFlushDelayMs ?? 0);
         const intervalMs = Number(diagnostics.flushIntervalMs || state.config?.mqttFlushIntervalMs || 15000);
-        const approxRate = delayMs > 0 ? Math.round(batchSize * 1000 / delayMs) + '/sec' : 'unlimited';
+        const buffer = diagnostics.buffer || {};
+        const replay = diagnostics.replay || {};
+        const metrics = diagnostics.metrics || {};
+        const approxRate = replay.configuredApproxMaxRatePerSec
+          ? replay.configuredApproxMaxRatePerSec + '/sec'
+          : (delayMs > 0 ? Math.round(batchSize * 1000 / delayMs) + '/sec' : 'unlimited');
+        const oldestAge = buffer.oldestAgeMs == null ? '-' : Math.round(buffer.oldestAgeMs / 1000) + 's';
 
         els.bufferingBufferedCount.textContent = String(mqtt.buffered ?? diagnostics.buffered ?? 0);
         els.bufferingFlushState.textContent = diagnostics.flushing ? 'Flushing' : 'Idle';
-        els.bufferingFlushMeta.textContent = 'batch=' + batchSize + ', delay=' + delayMs + 'ms, interval=' + intervalMs + 'ms';
+        els.bufferingFlushMeta.textContent =
+          'batch=' + batchSize +
+          ', delay=' + delayMs + 'ms' +
+          ', interval=' + intervalMs + 'ms' +
+          ', oldest=' + oldestAge;
         els.bufferingReplayRate.textContent = approxRate;
+        els.bufferingReplayRate.title =
+          'last flush ' + (replay.lastFlushPublished ?? metrics.lastFlushPublished ?? 0) +
+          ' messages at ' + (replay.lastFlushRatePerSec ?? metrics.lastFlushRatePerSec ?? 0) + '/sec';
       }
 
       function formatMemory(bytes) {
@@ -2149,6 +2166,7 @@ export function renderAdminUi(): string {
           debugTile('Runtime', status.runtimeState || '-', 'uptime ' + (processInfo.uptimeSec || 0) + 's, pid ' + (processInfo.pid || '-')) +
           debugTile('MQTT', status.mqtt && status.mqtt.connected ? 'Connected' : 'Offline', 'buffered ' + ((status.mqtt && status.mqtt.buffered) || 0)) +
           debugTile('OPC UA', status.opcua && status.opcua.connected ? 'Connected' : 'Offline', 'subscription ' + (opcDiagnostics.subscriptionState || status.opcua?.subscription || '-')) +
+          debugTile('Health', status.healthState || '-', (status.alerts || []).join(', ')) +
           debugTile('Logs', String((debug.logs || []).length), logsInfo.logFile || '');
 
         const compactDebug = {
@@ -2219,16 +2237,18 @@ export function renderAdminUi(): string {
               '<div></div>' +
             '</div>';
           }
+          const restoreDisabled = backup.redacted ? ' disabled title="Redacted backups remove secrets and cannot be restored"' : '';
           return '<div class="mapping-item">' +
             '<strong>' + escapeHtml(backup.fileName) + '</strong>' +
             '<div class="hint">' +
               escapeHtml(backup.deviceName || '-') +
               ' · ' + escapeHtml(backup.configVersion || '-') +
               ' · mappings ' + escapeHtml(backup.mappingCount ?? '-') +
+              (backup.redacted ? ' · redacted export' : ' · full backup') +
               ' · ' + escapeHtml(backup.createdAt || backup.modifiedAt || '-') +
             '</div>' +
             '<div class="tree-meta">' +
-              '<button class="btn btn-outline-primary btn-sm" type="button" data-restore-backup="' + escapeHtml(backup.fileName) + '">Restore</button>' +
+              '<button class="btn btn-outline-primary btn-sm" type="button" data-restore-backup="' + escapeHtml(backup.fileName) + '"' + restoreDisabled + '>Restore</button>' +
             '</div>' +
           '</div>';
         }).join('');
@@ -2268,6 +2288,12 @@ export function renderAdminUi(): string {
         const result = await api('/api/config/backup/local', { method: 'POST', body: '{}' });
         await loadBackups();
         setMessage(els.backupMessage, 'Local backup created: ' + result.backup.fileName, 'success');
+      }
+
+      async function createRedactedLocalBackup() {
+        const result = await api('/api/config/backup/local/redacted', { method: 'POST', body: '{}' });
+        await loadBackups();
+        setMessage(els.backupMessage, 'Redacted export created: ' + result.backup.fileName, 'success');
       }
 
       async function pushThingsBoardBackup() {
@@ -2549,6 +2575,14 @@ export function renderAdminUi(): string {
       els.createLocalBackupBtn.addEventListener('click', async () => {
         try {
           await createLocalBackup();
+        } catch (error) {
+          setMessage(els.backupMessage, error.message, 'error');
+        }
+      });
+
+      els.createRedactedLocalBackupBtn.addEventListener('click', async () => {
+        try {
+          await createRedactedLocalBackup();
         } catch (error) {
           setMessage(els.backupMessage, error.message, 'error');
         }

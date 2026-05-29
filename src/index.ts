@@ -395,6 +395,14 @@ async function main() {
         return;
       }
 
+      if (method === 'POST' && pathname === '/api/config/backup/local/redacted') {
+        if (!requireAuth(req, res)) return;
+        const backup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-redacted-local-backup', { redactSecrets: true });
+        logger.info({ msg: 'Redacted local config backup created', fileName: backup.fileName, configVersion: backup.configVersion });
+        sendJson(res, 200, { ok: true, backup });
+        return;
+      }
+
       if (method === 'POST' && pathname === '/api/config/backup/thingsboard') {
         if (!requireAuth(req, res)) return;
         const runtime = runtimeManager.currentRuntime;
@@ -420,6 +428,10 @@ async function main() {
         const body = await readJsonBody(req);
         const fileName = String(body.fileName || '');
         const envelope = await readLocalConfigBackup(fileName);
+        if (envelope.redacted) {
+          sendJson(res, 400, { error: 'Redacted backups cannot be restored because secrets are removed' });
+          return;
+        }
         const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-restore-rollback');
         try {
           await runtimeManager.saveAndApplyConfig(envelope.config, 'admin-ui-local-restore');
@@ -459,6 +471,10 @@ async function main() {
         if (!requireAuth(req, res)) return;
         const body = await readJsonBody(req);
         const envelope = normalizeConfigBackupEnvelope(body.backup || body.config || body);
+        if (envelope.redacted) {
+          sendJson(res, 400, { error: 'Redacted backups cannot be restored because secrets are removed' });
+          return;
+        }
         const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-upload-restore-rollback');
         try {
           await runtimeManager.saveAndApplyConfig(envelope.config, 'admin-ui-upload-restore');
@@ -490,6 +506,10 @@ async function main() {
         const envelope = extractThingsBoardConfigBackup(payload);
         if (!envelope) {
           sendJson(res, 404, { error: 'No ThingsBoard config backup attribute found' });
+          return;
+        }
+        if (envelope.redacted) {
+          sendJson(res, 400, { error: 'Redacted backups cannot be restored because secrets are removed' });
           return;
         }
         const rollbackBackup = await createLocalConfigBackup(runtimeManager.config, 'admin-ui-pre-thingsboard-restore-rollback');

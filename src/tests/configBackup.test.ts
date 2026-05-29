@@ -51,6 +51,7 @@ test('config backup envelope contains full config and metadata', () => {
   assert.equal(backup.deviceName, 'gw');
   assert.equal(backup.mappingCount, 1);
   assert.equal(backup.containsSecrets, true);
+  assert.equal(backup.redacted, false);
   assert.equal(backup.config.tb.accessToken, 'token');
   assert.ok(backup.hash.startsWith('sha256:'));
 });
@@ -64,8 +65,23 @@ test('ThingsBoard backup attributes can be extracted from client response shape'
   assert.equal(extracted.configVersion, backup.configVersion);
   assert.equal(extracted.config.mapping[0].key, 'PV');
   assert.equal(attrs[CONFIG_BACKUP_META_ATTRIBUTE_KEY].containsSecrets, true);
+  assert.equal(attrs[CONFIG_BACKUP_META_ATTRIBUTE_KEY].redacted, false);
   assert.equal(attrs[CONFIG_BACKUP_ATTRIBUTE_KEY].encoding, 'gzip+base64-json');
   assert.equal('config' in attrs[CONFIG_BACKUP_ATTRIBUTE_KEY], false);
+});
+
+test('redacted config backup removes secrets and marks metadata', () => {
+  const source = cfg();
+  source.opcua.password = 'secret';
+  source.tb.deviceCredentials = [{ thingsBoardDeviceName: 'child', accessToken: 'child-token' }];
+
+  const backup = createConfigBackupEnvelope(source, 'test', { redactSecrets: true });
+
+  assert.equal(backup.containsSecrets, false);
+  assert.equal(backup.redacted, true);
+  assert.equal(backup.config.tb.accessToken, '<redacted>');
+  assert.equal(backup.config.opcua.password, '<redacted>');
+  assert.equal(backup.config.tb.deviceCredentials?.[0].accessToken, '<redacted>');
 });
 
 test('raw config JSON can be normalized as a restore backup', () => {

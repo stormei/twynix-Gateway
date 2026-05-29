@@ -1,4 +1,5 @@
 {
+  "schemaVersion": "twynix.gateway.config.v1",
   "deviceName": "Machine001",
   "tb": {
     "url": "mqtt://thingsboard.example.local:1883",

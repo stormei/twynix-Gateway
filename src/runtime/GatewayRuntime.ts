@@ -98,6 +98,7 @@ export type GatewayRuntime = {
   tb: TbBridge;
   opc: OpcUaClient;
   getRpcStats: () => ReturnType<RpcExecutor['getStats']>;
+  getDeliveryMetrics: () => Record<string, unknown>;
   updateConfigHot: (nextCfg: EdgeConfig) => Promise<void>;
   close: () => Promise<void>;
 };
@@ -229,6 +230,15 @@ export class GatewayRuntimeManager {
       rpc: {
         pendingTotal: 0
       },
+      delivery: {
+        opcSamplesReceived: 0,
+        telemetryPublishAttempts: 0,
+        telemetryPublishSuccess: 0,
+        telemetryPublishFailures: 0
+      },
+      healthState: this.runtimeState === 'error' ? 'config_error' : 'starting',
+      alarmState: this.runtimeState === 'error' ? 'critical' : 'warning',
+      alerts: this.runtimeState === 'error' ? ['CONFIG_ERROR'] : ['RUNTIME_STARTING'],
       readiness: {
         tbConnected: false,
         tbRpcReady: false,
@@ -394,6 +404,7 @@ export class GatewayRuntimeManager {
         diagnostics: opcDiagnostics
       },
       rpc: runtime.getRpcStats(),
+      delivery: runtime.getDeliveryMetrics(),
       readiness: {
         tbConnected: runtime.mqtt.isConnected(),
         tbRpcReady: runtime.mqtt.isConnected() && this.runtimeState === 'ready',
@@ -409,12 +420,18 @@ export class GatewayRuntimeManager {
       deviceName: runtime.cfg.deviceName
     };
 
+    const alerts = this.getAlerts(snapshot);
+    const healthState = this.getHealthState(snapshot, alerts);
+
     return {
       ok:
         snapshot.mqtt.connected &&
         snapshot.mqtt.fresh &&
         snapshot.opcua.connected &&
         snapshot.opcua.fresh,
+      healthState,
+      alarmState: healthState === 'healthy' ? 'ok' : healthState === 'buffering' || healthState === 'degraded' ? 'warning' : 'critical',
+      alerts,
       config: {
         desiredVersion: configVersion(this.cfg),
         activeRuntimeVersion: configVersion(runtime.cfg),
@@ -436,5 +453,28 @@ export class GatewayRuntimeManager {
         .map((tag) => tag.target?.thingsBoardDeviceId || tag.target?.thingsBoardDeviceName)
         .filter(Boolean)
     ).size;
+  }
+
+  private getAlerts(snapshot: any): string[] {
+    const alerts: string[] = [];
+    if (this.runtimeState === 'error') alerts.push('CONFIG_ERROR');
+    if (this.retryTimer) alerts.push('RUNTIME_RETRY_SCHEDULED');
+    if (!snapshot.mqtt.connected) alerts.push('MQTT_OFFLINE');
+    else if (!snapshot.mqtt.fresh) alerts.push('MQTT_STALE');
+    if (!snapshot.opcua.connected) alerts.push('OPCUA_OFFLINE');
+    else if (!snapshot.opcua.fresh) alerts.push('OPCUA_STALE');
+    if (!snapshot.opcua.subscription) alerts.push('OPCUA_SUBSCRIPTION_NOT_READY');
+    if (Number(snapshot.mqtt.buffered || 0) > 0) alerts.push('BUFFERED_MESSAGES');
+    if (Number(snapshot.delivery?.telemetryPublishFailures || 0) > 0) alerts.push('TELEMETRY_PUBLISH_FAILURES');
+    return Array.from(new Set(alerts));
+  }
+
+  private getHealthState(snapshot: any, alerts: string[]) {
+    if (this.runtimeState === 'error') return 'config_error';
+    if (!snapshot.mqtt.connected) return 'mqtt_error';
+    if (!snapshot.opcua.connected) return 'opcua_error';
+    if (Number(snapshot.mqtt.buffered || 0) > 0) return 'buffering';
+    if (alerts.length) return 'degraded';
+    return 'healthy';
   }
 }

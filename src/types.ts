@@ -85,6 +85,7 @@ export interface DeviceCredential {
 }
 
 export interface EdgeConfig {
+  schemaVersion?: string;
   deviceName: string;
   tb: {
     url: string;
