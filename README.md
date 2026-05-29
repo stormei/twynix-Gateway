@@ -90,6 +90,16 @@ The admin UI header shows the running version as `APP_VERSION+BUILD_SHA`. If the
 
 The gateway also checks the saved `CONFIG_PATH` periodically, controlled by `CONFIG_RECONCILE_INTERVAL_MS`. If the file contains newer MQTT or OPC UA settings than the active runtime, it logs `Saved config differs from active runtime; applying stored config` and reapplies the stored config.
 
+Buffered MQTT replay can be throttled to protect ThingsBoard rule chains and downstream sinks such as IoTDB during reconnect recovery:
+
+```bash
+MQTT_FLUSH_BATCH_SIZE=50
+MQTT_FLUSH_DELAY_MS=250
+MQTT_FLUSH_INTERVAL_MS=15000
+```
+
+`MQTT_FLUSH_BATCH_SIZE` controls how many persisted messages are replayed at once. `MQTT_FLUSH_DELAY_MS` waits between replay batches. `MQTT_FLUSH_INTERVAL_MS` controls the periodic background flush interval.
+
 The admin UI includes an authenticated **Debug** page with redacted recent logs, runtime status, OPC UA diagnostics, MQTT status, and sanitized config metadata. The same data is available over authenticated endpoints:
 
 ```text

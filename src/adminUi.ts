@@ -1392,6 +1392,18 @@ export function renderAdminUi(): string {
                     Minimum write interval (ms)
                     <input class="form-control" id="writeMinIntervalMs" type="number" min="0" />
                   </label>
+                  <label>
+                    Flush batch size
+                    <input class="form-control" id="mqttFlushBatchSize" type="number" min="1" max="10000" />
+                  </label>
+                  <label>
+                    Flush delay (ms)
+                    <input class="form-control" id="mqttFlushDelayMs" type="number" min="0" max="60000" />
+                  </label>
+                  <label>
+                    Flush interval (ms)
+                    <input class="form-control" id="mqttFlushIntervalMs" type="number" min="1000" max="3600000" />
+                  </label>
                 </div>
                 <label class="checkbox">
                   <input id="tbRejectUnauthorized" type="checkbox" />
@@ -1938,6 +1950,9 @@ export function renderAdminUi(): string {
         document.getElementById('tbCertPath').value = cfg.tb.certPath || '';
         document.getElementById('tbKeyPath').value = cfg.tb.keyPath || '';
         document.getElementById('writeMinIntervalMs').value = String(cfg.writeMinIntervalMs ?? 100);
+        document.getElementById('mqttFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
+        document.getElementById('mqttFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
+        document.getElementById('mqttFlushIntervalMs').value = String(cfg.mqttFlushIntervalMs ?? 15000);
         document.getElementById('tbRejectUnauthorized').checked = cfg.tb.rejectUnauthorized !== false;
 
         document.getElementById('opcUrl').value = cfg.opcua.url || '';
@@ -2532,6 +2547,9 @@ export function renderAdminUi(): string {
             deviceName: document.getElementById('deviceName').value.trim(),
             logLevel: document.getElementById('logLevel').value,
             writeMinIntervalMs: Number(document.getElementById('writeMinIntervalMs').value),
+            mqttFlushBatchSize: Number(document.getElementById('mqttFlushBatchSize').value),
+            mqttFlushDelayMs: Number(document.getElementById('mqttFlushDelayMs').value),
+            mqttFlushIntervalMs: Number(document.getElementById('mqttFlushIntervalMs').value),
             tb: {
               url: document.getElementById('tbUrl').value.trim(),
               accessToken: document.getElementById('tbAccessToken').value,

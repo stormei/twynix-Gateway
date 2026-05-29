@@ -30,6 +30,9 @@ export interface MqttOptions {
   qos: 0|1|2;
   sqlitePath: string;
   sqliteMaxRows: number;
+  flushBatchSize?: number;
+  flushDelayMs?: number;
+  flushIntervalMs?: number;
   caPath?: string;
   certPath?: string;
   keyPath?: string;
@@ -54,6 +57,9 @@ export class MqttHandler {
   private lastEventAt = Date.now();
   private lastError: string | null = null;
   private lastDisconnectReasonCode: number | null = null;
+  private flushBatchSize: number;
+  private flushDelayMs: number;
+  private flushIntervalMs: number;
 
   private recordEvent(event: string) {
     this.lastEvent = event;
@@ -65,6 +71,9 @@ export class MqttHandler {
     this.qos = opts.qos;
     this.url = opts.url;
     this.clientId = opts.clientId;
+    this.flushBatchSize = Math.max(1, Math.floor(opts.flushBatchSize ?? 200));
+    this.flushDelayMs = Math.max(0, Math.floor(opts.flushDelayMs ?? 0));
+    this.flushIntervalMs = Math.max(1000, Math.floor(opts.flushIntervalMs ?? 15000));
 
     const tls: any = {};
     if (opts.caPath) try { tls.ca = fs.readFileSync(opts.caPath); } catch {}
@@ -150,7 +159,7 @@ export class MqttHandler {
       }
     });
 
-    this.timer = setInterval(() => this.flushLoop(), 15000);
+    this.timer = setInterval(() => this.flushLoop(), this.flushIntervalMs);
   }
 
   subscribe(topic: string, handler: Handler) {
@@ -194,9 +203,15 @@ export class MqttHandler {
     if (priorityFlag) await this.flushOnce();
   }
 
-  private async flushOnce(batchSize = 200) {
+  private async delay(ms: number) {
+    if (ms <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async flushOnce(batchSize = this.flushBatchSize) {
     if (this.ended || this.flushing || !this.connected) return;
     this.flushing = true;
+    let published = 0;
     try {
       let batch: BufferedMessage[] = this.store.getBatch(batchSize);
       while (batch.length && this.connected && !this.ended) {
@@ -209,14 +224,25 @@ export class MqttHandler {
           }
           this.lastPublishedTopic = m.topic;
           this.client.publish(m.topic, m.payload, { qos: this.qos }, (err) => {
-            if (!err && m.id && !this.ended) this.store.remove(m.id);
+            if (!err && m.id && !this.ended) {
+              this.store.remove(m.id);
+              published += 1;
+            }
             if (err) logger.error({ msg: 'flush publish failed, will retry later', id: m.id, err });
             res();
           });
         })));
+        if (this.flushDelayMs > 0 && this.connected && !this.ended) {
+          await this.delay(this.flushDelayMs);
+        }
         batch = this.store.getBatch(batchSize);
       }
-      if (batch.length === 0) logger.info({ msg: 'buffer flushed' });
+      if (batch.length === 0) logger.info({
+        msg: 'buffer flushed',
+        published,
+        flushBatchSize: this.flushBatchSize,
+        flushDelayMs: this.flushDelayMs
+      });
     } finally {
       this.flushing = false;
     }
@@ -266,7 +292,11 @@ export class MqttHandler {
       lastError: this.lastError,
       lastDisconnectReasonCode: this.lastDisconnectReasonCode,
       lastPublishedTopic: this.lastPublishedTopic,
-      buffered: this.getBufferedCount()
+      buffered: this.getBufferedCount(),
+      flushBatchSize: this.flushBatchSize,
+      flushDelayMs: this.flushDelayMs,
+      flushIntervalMs: this.flushIntervalMs,
+      flushing: this.flushing
     };
   }
 }

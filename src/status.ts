@@ -44,7 +44,10 @@ export function sanitizedConfigSummary(cfg: EdgeConfig) {
     ).size,
     configVersion: configVersion(cfg),
     logLevel: cfg.logLevel,
-    writeMinIntervalMs: cfg.writeMinIntervalMs
+    writeMinIntervalMs: cfg.writeMinIntervalMs,
+    mqttFlushBatchSize: cfg.mqttFlushBatchSize,
+    mqttFlushDelayMs: cfg.mqttFlushDelayMs,
+    mqttFlushIntervalMs: cfg.mqttFlushIntervalMs
   };
 }
 

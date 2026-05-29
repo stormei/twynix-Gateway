@@ -121,6 +121,9 @@ export interface EdgeConfig {
   mapping: TagSpec[];
   sqlitePath: string;
   sqliteMaxRows: number;
+  mqttFlushBatchSize?: number;
+  mqttFlushDelayMs?: number;
+  mqttFlushIntervalMs?: number;
   // ✅ Step 3: RPC command journal (idempotency + traceability)
   // If not provided, defaults are derived in config loader.
   rpcJournalPath?: string;

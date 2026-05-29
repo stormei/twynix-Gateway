@@ -51,6 +51,9 @@ function buildDefaultConfig(): EdgeConfig {
     mapping: defaultMapping.map(tag => normalizeMapping(tag)),
     sqlitePath: process.env.SQLITE_PATH || './data/messages.db',
     sqliteMaxRows: Number(process.env.SQLITE_MAX_ROWS || 500000),
+    mqttFlushBatchSize: Number(process.env.MQTT_FLUSH_BATCH_SIZE || 200),
+    mqttFlushDelayMs: Number(process.env.MQTT_FLUSH_DELAY_MS || 0),
+    mqttFlushIntervalMs: Number(process.env.MQTT_FLUSH_INTERVAL_MS || 15000),
     logLevel: (process.env.LOG_LEVEL as EdgeConfig['logLevel']) || 'info',
     writeMinIntervalMs: Number(process.env.WRITE_MIN_INTERVAL_MS || 100),
     rpcJournalPath: process.env.RPC_JOURNAL_PATH || './data/rpc-journal.db',
@@ -84,6 +87,15 @@ function normalizeConfig(cfg: EdgeConfig): EdgeConfig {
       ...opcua,
     },
     mapping: incomingMappings.map((tag: any) => normalizeMapping(tag)),
+    mqttFlushBatchSize: Number.isFinite(cfg.mqttFlushBatchSize)
+      ? cfg.mqttFlushBatchSize
+      : defaults.mqttFlushBatchSize,
+    mqttFlushDelayMs: Number.isFinite(cfg.mqttFlushDelayMs)
+      ? cfg.mqttFlushDelayMs
+      : defaults.mqttFlushDelayMs,
+    mqttFlushIntervalMs: Number.isFinite(cfg.mqttFlushIntervalMs)
+      ? cfg.mqttFlushIntervalMs
+      : defaults.mqttFlushIntervalMs,
     rpcJournalPath: cfg.rpcJournalPath || defaults.rpcJournalPath,
     rpcJournalMaxRows: Number.isFinite(cfg.rpcJournalMaxRows)
       ? cfg.rpcJournalMaxRows
@@ -231,6 +243,15 @@ export function validateConfig(cfg: EdgeConfig) {
   }
   if (!Number.isFinite(cfg.sqliteMaxRows) || cfg.sqliteMaxRows < 1000) {
     throw new Error('sqliteMaxRows must be a number >= 1000');
+  }
+  if (cfg.mqttFlushBatchSize !== undefined && (!Number.isFinite(cfg.mqttFlushBatchSize) || cfg.mqttFlushBatchSize < 1 || cfg.mqttFlushBatchSize > 10000)) {
+    throw new Error('mqttFlushBatchSize must be a number between 1 and 10000');
+  }
+  if (cfg.mqttFlushDelayMs !== undefined && (!Number.isFinite(cfg.mqttFlushDelayMs) || cfg.mqttFlushDelayMs < 0 || cfg.mqttFlushDelayMs > 60000)) {
+    throw new Error('mqttFlushDelayMs must be a number between 0 and 60000');
+  }
+  if (cfg.mqttFlushIntervalMs !== undefined && (!Number.isFinite(cfg.mqttFlushIntervalMs) || cfg.mqttFlushIntervalMs < 1000 || cfg.mqttFlushIntervalMs > 3600000)) {
+    throw new Error('mqttFlushIntervalMs must be a number between 1000 and 3600000');
   }
   if (!cfg.sqlitePath || typeof cfg.sqlitePath !== 'string') {
     throw new Error('sqlitePath must be a string');

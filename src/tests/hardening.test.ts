@@ -26,6 +26,9 @@ function cfg(overrides: Partial<EdgeConfig> = {}): EdgeConfig {
     mapping: [],
     sqlitePath: './data/hardening-test.db',
     sqliteMaxRows: 1000,
+    mqttFlushBatchSize: 200,
+    mqttFlushDelayMs: 0,
+    mqttFlushIntervalMs: 15000,
     rpcJournalPath: './data/hardening-rpc-test.db',
     rpcJournalMaxRows: 1000,
     logLevel: 'error',
@@ -44,6 +47,7 @@ test('gateway identity attributes publish sanitized config summary without secre
   assert.equal(text.includes('secret-token'), false);
   assert.equal(text.includes('target-secret'), false);
   assert.equal(text.includes('opc-secret'), false);
+  assert.equal(attrs.edge.config.mqttFlushBatchSize, 200);
 });
 
 test('config restart scope hot-applies mapping and write interval changes only', () => {
@@ -71,6 +75,16 @@ test('config restart scope requires full restart for OPC UA endpoint changes', (
       ...current.opcua,
       url: 'opc.tcp://localhost:49320'
     }
+  });
+
+  assert.equal(configRestartScope(current, next), 'full');
+});
+
+test('config restart scope requires full restart for MQTT flush throttle changes', () => {
+  const current = cfg();
+  const next = cfg({
+    mqttFlushBatchSize: 50,
+    mqttFlushDelayMs: 250
   });
 
   assert.equal(configRestartScope(current, next), 'full');
