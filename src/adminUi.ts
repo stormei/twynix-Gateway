@@ -1226,6 +1226,11 @@ export function renderAdminUi(): string {
                           <span class="nav-menu-label">OPC UA</span>
                         </span>
                       </button>
+                      <button class="nav-menu-item" data-tab="buffering" type="button">
+                        <span class="nav-menu-text">
+                          <span class="nav-menu-label">Buffering / Replay</span>
+                        </span>
+                      </button>
                     </div>
                   </div>
                   <div class="nav-tree-group" data-nav-group>
@@ -1477,6 +1482,70 @@ export function renderAdminUi(): string {
                   <button class="btn btn-primary" type="submit">Save OPC UA</button>
                 </div>
                 <div class="message" id="opcMessage"></div>
+              </form>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-buffering" class="hidden">
+            <div class="card">
+              <div class="card-body">
+              <div class="section-head">
+                <div>
+                  <h2 class="card-title mb-1">Buffering / replay settings</h2>
+                  <p class="text-secondary mb-0">Throttle persisted MQTT replay after reconnect so ThingsBoard rule chains and IoTDB are not flooded.</p>
+                </div>
+              </div>
+              <div class="row row-cards mb-3">
+                <div class="col-sm-4">
+                  <div class="card stat h-100">
+                    <div class="card-body">
+                      <h3 class="card-title">Buffered</h3>
+                      <div class="stat-value" id="bufferingBufferedCount">0</div>
+                      <p class="text-secondary mb-0">Messages waiting for replay</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-sm-4">
+                  <div class="card stat h-100">
+                    <div class="card-body">
+                      <h3 class="card-title">Flush state</h3>
+                      <div class="stat-value" id="bufferingFlushState">-</div>
+                      <p class="text-secondary mb-0" id="bufferingFlushMeta">-</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-sm-4">
+                  <div class="card stat h-100">
+                    <div class="card-body">
+                      <h3 class="card-title">Replay rate</h3>
+                      <div class="stat-value" id="bufferingReplayRate">-</div>
+                      <p class="text-secondary mb-0">Approximate max replay speed</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <form id="throttleForm">
+                <div class="form-grid">
+                  <label>
+                    Flush batch size
+                    <input class="form-control" id="throttleFlushBatchSize" type="number" min="1" max="10000" required />
+                  </label>
+                  <label>
+                    Delay between batches (ms)
+                    <input class="form-control" id="throttleFlushDelayMs" type="number" min="0" max="60000" required />
+                  </label>
+                  <label>
+                    Background flush interval (ms)
+                    <input class="form-control" id="throttleFlushIntervalMs" type="number" min="1000" max="3600000" required />
+                  </label>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-primary" type="submit">Save replay throttle</button>
+                  <button class="btn btn-outline-secondary" id="throttleConservativePreset" type="button">IoTDB safe preset</button>
+                  <button class="btn btn-outline-secondary" id="throttleDefaultPreset" type="button">Default preset</button>
+                </div>
+                <div class="message" id="throttleMessage"></div>
               </form>
               </div>
             </div>
@@ -1757,9 +1826,17 @@ export function renderAdminUi(): string {
         statusDump: document.getElementById('statusDump'),
         tbForm: document.getElementById('tbForm'),
         opcForm: document.getElementById('opcForm'),
+        throttleForm: document.getElementById('throttleForm'),
         passwordForm: document.getElementById('passwordForm'),
         tbMessage: document.getElementById('tbMessage'),
         opcMessage: document.getElementById('opcMessage'),
+        throttleMessage: document.getElementById('throttleMessage'),
+        throttleConservativePreset: document.getElementById('throttleConservativePreset'),
+        throttleDefaultPreset: document.getElementById('throttleDefaultPreset'),
+        bufferingBufferedCount: document.getElementById('bufferingBufferedCount'),
+        bufferingFlushState: document.getElementById('bufferingFlushState'),
+        bufferingFlushMeta: document.getElementById('bufferingFlushMeta'),
+        bufferingReplayRate: document.getElementById('bufferingReplayRate'),
         passwordMessage: document.getElementById('passwordMessage'),
         backupMessage: document.getElementById('backupMessage'),
         backupList: document.getElementById('backupList'),
@@ -1818,6 +1895,7 @@ export function renderAdminUi(): string {
         status: document.getElementById('tab-status'),
         thingsboard: document.getElementById('tab-thingsboard'),
         opcua: document.getElementById('tab-opcua'),
+        buffering: document.getElementById('tab-buffering'),
         browser: document.getElementById('tab-browser'),
         admin: document.getElementById('tab-admin'),
         backup: document.getElementById('tab-backup'),
@@ -1953,6 +2031,9 @@ export function renderAdminUi(): string {
         document.getElementById('mqttFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
         document.getElementById('mqttFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
         document.getElementById('mqttFlushIntervalMs').value = String(cfg.mqttFlushIntervalMs ?? 15000);
+        document.getElementById('throttleFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
+        document.getElementById('throttleFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
+        document.getElementById('throttleFlushIntervalMs').value = String(cfg.mqttFlushIntervalMs ?? 15000);
         document.getElementById('tbRejectUnauthorized').checked = cfg.tb.rejectUnauthorized !== false;
 
         document.getElementById('opcUrl').value = cfg.opcua.url || '';
@@ -2011,6 +2092,22 @@ export function renderAdminUi(): string {
         els.rpcPending.textContent = String(status.rpc.pendingTotal ?? 0);
         els.statusDump.textContent = JSON.stringify(status, null, 2);
         renderVersion(status.version);
+        renderBufferingStatus();
+      }
+
+      function renderBufferingStatus() {
+        const status = state.status || {};
+        const mqtt = status.mqtt || {};
+        const diagnostics = mqtt.diagnostics || {};
+        const batchSize = Number(diagnostics.flushBatchSize || state.config?.mqttFlushBatchSize || 200);
+        const delayMs = Number(diagnostics.flushDelayMs ?? state.config?.mqttFlushDelayMs ?? 0);
+        const intervalMs = Number(diagnostics.flushIntervalMs || state.config?.mqttFlushIntervalMs || 15000);
+        const approxRate = delayMs > 0 ? Math.round(batchSize * 1000 / delayMs) + '/sec' : 'unlimited';
+
+        els.bufferingBufferedCount.textContent = String(mqtt.buffered ?? diagnostics.buffered ?? 0);
+        els.bufferingFlushState.textContent = diagnostics.flushing ? 'Flushing' : 'Idle';
+        els.bufferingFlushMeta.textContent = 'batch=' + batchSize + ', delay=' + delayMs + 'ms, interval=' + intervalMs + 'ms';
+        els.bufferingReplayRate.textContent = approxRate;
       }
 
       function formatMemory(bytes) {
@@ -2426,6 +2523,20 @@ export function renderAdminUi(): string {
         }
       });
 
+      els.throttleConservativePreset.addEventListener('click', () => {
+        document.getElementById('throttleFlushBatchSize').value = '50';
+        document.getElementById('throttleFlushDelayMs').value = '250';
+        document.getElementById('throttleFlushIntervalMs').value = '15000';
+        setMessage(els.throttleMessage, 'IoTDB safe preset loaded. Save to apply.', '');
+      });
+
+      els.throttleDefaultPreset.addEventListener('click', () => {
+        document.getElementById('throttleFlushBatchSize').value = '200';
+        document.getElementById('throttleFlushDelayMs').value = '0';
+        document.getElementById('throttleFlushIntervalMs').value = '15000';
+        setMessage(els.throttleMessage, 'Default preset loaded. Save to apply.', '');
+      });
+
       els.refreshBackupsBtn.addEventListener('click', async () => {
         try {
           await loadBackups();
@@ -2610,6 +2721,33 @@ export function renderAdminUi(): string {
           }
         } catch (error) {
           if (!(error instanceof AuthExpiredError)) setMessage(els.opcMessage, error.message, 'error');
+        }
+      });
+
+      els.throttleForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setMessage(els.throttleMessage, '', '');
+        try {
+          if (!state.authenticated) throw new AuthExpiredError();
+          const patch = {
+            mqttFlushBatchSize: Number(document.getElementById('throttleFlushBatchSize').value),
+            mqttFlushDelayMs: Number(document.getElementById('throttleFlushDelayMs').value),
+            mqttFlushIntervalMs: Number(document.getElementById('throttleFlushIntervalMs').value)
+          };
+
+          state.config = await api('/api/config', {
+            method: 'PUT',
+            body: JSON.stringify(patch)
+          });
+          renderConfig();
+          await loadStatus();
+          if (state.config.runtimeApplyError) {
+            setMessage(els.throttleMessage, 'Settings saved, but runtime apply failed: ' + state.config.runtimeApplyError, 'error');
+          } else {
+            setMessage(els.throttleMessage, 'Replay throttle saved and applied.', 'success');
+          }
+        } catch (error) {
+          if (!(error instanceof AuthExpiredError)) setMessage(els.throttleMessage, error.message, 'error');
         }
       });
 
