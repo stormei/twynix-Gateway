@@ -131,12 +131,32 @@ export class RpcExecutor {
     });
 
     const method = String(req?.method || '').trim();
-    const mapping = this.mappedWrites.find((tag) => tag.write?.rpcMethod === method && targetMatches(tag, identity));
-    if (!mapping) {
-      return finish({ ok: false, code: 'UNKNOWN_METHOD', error: `Unknown method ${method}` });
+    const params = req?.params;
+    const mappedDeviceWriteTag = method === 'writeTag';
+
+    if (mappedDeviceWriteTag && !isObject(params)) {
+      return finish({ ok: false, code: 'BAD_TYPE', error: 'params must be an object' });
     }
 
-    const params = req?.params;
+    const requestedKey = mappedDeviceWriteTag ? String(params.key || '').trim() : '';
+
+    if (mappedDeviceWriteTag && !requestedKey) {
+      return finish({ ok: false, code: 'BAD_TYPE', error: 'Missing params.key' });
+    }
+
+    const mapping = this.mappedWrites.find((tag) => {
+      if (!targetMatches(tag, identity)) return false;
+      return mappedDeviceWriteTag
+        ? tag.key === requestedKey
+        : tag.write?.rpcMethod === method;
+    });
+    if (!mapping) {
+      const error = mappedDeviceWriteTag
+        ? `Unknown tag ${requestedKey}`
+        : `Unknown method ${method}`;
+      return finish({ ok: false, code: 'UNKNOWN_METHOD', error });
+    }
+
     const value = isObject(params) && Object.prototype.hasOwnProperty.call(params, 'value') ? params.value : params;
     return this.writeMapping(mapping, value, finish);
   }
