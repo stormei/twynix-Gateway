@@ -89,3 +89,137 @@ test('mapped-device RPC resolves method and target device', async () => {
   assert.equal(result.code, 'OK');
   assert.equal(opc.writes[0].tag.key, 'PumpSpeed');
 });
+
+test('mapped-device writeTag resolves mapping by target and key', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'HS17-Drivhus' },
+    { method: 'writeTag', params: { key: 'Vanning', value: true } }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.code, 'OK');
+  assert.equal(opc.writes.length, 1);
+  assert.equal(opc.writes[0].tag.key, 'Vanning');
+  assert.equal(opc.writes[0].value, true);
+});
+
+test('mapped-device writeTag rejects a key assigned to another target', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'Another asset' },
+    { method: 'writeTag', params: { key: 'Vanning', value: true } }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'UNKNOWN_METHOD');
+  assert.equal(opc.writes.length, 0);
+});
+
+test('mapped-device writeTag rejects an unknown key', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'HS17-Drivhus' },
+    { method: 'writeTag', params: { key: 'Unknown', value: true } }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'UNKNOWN_METHOD');
+  assert.equal(opc.writes.length, 0);
+});
+
+test('mapped-device writeTag validates the mapped OPC UA value type', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'HS17-Drivhus' },
+    { method: 'writeTag', params: { key: 'Vanning', value: 'true' } }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BAD_TYPE');
+  assert.equal(opc.writes.length, 0);
+});
+
+test('mapped-device writeTag requires params.key', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'HS17-Drivhus' },
+    { method: 'writeTag', params: { value: true } }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BAD_TYPE');
+  assert.equal(opc.writes.length, 0);
+});
+
+test('mapped-device writeTag requires object params', async () => {
+  const cfg = makeConfig({
+    key: 'Vanning',
+    nodeId: 'ns=2;s=Vanning',
+    type: 'Boolean',
+    writable: true,
+    target: { mode: 'mapped-device', thingsBoardDeviceName: 'HS17-Drivhus', telemetryKey: 'vanning' },
+    write: { enabled: true, rpcMethod: 'vanning' }
+  });
+  const opc = new FakeOpc();
+  const rpc = new RpcExecutor(cfg, opc, cfg.mapping);
+
+  const result = await rpc.handleMappedDeviceRpc(
+    { deviceName: 'HS17-Drivhus' },
+    { method: 'writeTag', params: true }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BAD_TYPE');
+  assert.equal(opc.writes.length, 0);
+});

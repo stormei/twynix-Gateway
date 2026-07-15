@@ -41,6 +41,22 @@ Write a shared attribute:
 ```
 The gateway persists to `config.json` and confirms via client attributes `edge.config`.
 
+## RPC writes
+
+Use the same `writeTag` contract for the gateway device and mapped ThingsBoard devices:
+
+```json
+{
+  "method": "writeTag",
+  "params": {
+    "key": "Vanning",
+    "value": true
+  }
+}
+```
+
+For a mapped device, `params.key` must exactly match a writable mapping `key`, and the mapping target must match the ThingsBoard device receiving the RPC. Existing mapping-specific methods configured through `write.rpcMethod` remain supported for backward compatibility.
+
 ## Docker
 
 The container stores mutable runtime state under `/data`:
