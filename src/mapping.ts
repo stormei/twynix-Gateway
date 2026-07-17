@@ -42,9 +42,12 @@ export function normalizeMapping(tag: any, endpointId = 'default'): TagSpec {
   const type = String(tag?.type || tag?.opcua?.dataType || 'String') as DataTypeName;
   const writable = Boolean(tag?.writable ?? tag?.opcua?.writable ?? tag?.write?.enabled ?? false);
   const hasMappedTargetIdentity = !!(tag?.target?.thingsBoardDeviceId || tag?.target?.thingsBoardDeviceName);
-  const targetMode = tag?.target?.mode === 'mapped-device' || hasMappedTargetIdentity
-    ? 'mapped-device'
-    : 'gateway-device';
+  const explicitTargetMode = tag?.target?.mode;
+  const targetMode = explicitTargetMode === 'gateway-device'
+    ? 'gateway-device'
+    : explicitTargetMode === 'mapped-device' || hasMappedTargetIdentity
+      ? 'mapped-device'
+      : 'gateway-device';
   const telemetry = String(tag?.target?.telemetryKey || key).trim();
   const rpcMethod = String(tag?.write?.rpcMethod || `write.${key}`).trim();
   const writeEnabled = Boolean(tag?.write?.enabled ?? writable);
@@ -69,8 +72,8 @@ export function normalizeMapping(tag: any, endpointId = 'default'): TagSpec {
     },
     target: {
       mode: targetMode,
-      thingsBoardDeviceId: tag?.target?.thingsBoardDeviceId,
-      thingsBoardDeviceName: tag?.target?.thingsBoardDeviceName,
+      thingsBoardDeviceId: targetMode === 'mapped-device' ? tag?.target?.thingsBoardDeviceId : undefined,
+      thingsBoardDeviceName: targetMode === 'mapped-device' ? tag?.target?.thingsBoardDeviceName : undefined,
       telemetryKey: telemetry || key
     },
     read: {

@@ -59,6 +59,28 @@ test('mapping with target device identity defaults to mapped-device mode', () =>
   assert.equal(cfg.mapping[0].target?.thingsBoardDeviceName, 'Pump A');
 });
 
+test('explicit gateway-device mode wins over stale target identity', () => {
+  const cfg = baseConfig([
+    {
+      key: 'TempRaw',
+      nodeId: 'ns=2;s=Temp',
+      type: 'Double',
+      writable: false,
+      target: {
+        mode: 'gateway-device',
+        thingsBoardDeviceId: 'gateway-id',
+        thingsBoardDeviceName: 'gw',
+        telemetryKey: 'temperature'
+      }
+    }
+  ]);
+
+  assert.equal(cfg.mapping[0].target?.mode, 'gateway-device');
+  assert.equal(cfg.mapping[0].target?.thingsBoardDeviceId, undefined);
+  assert.equal(cfg.mapping[0].target?.thingsBoardDeviceName, undefined);
+  assert.doesNotThrow(() => rejectInvalidMappedTargets(cfg));
+});
+
 test('misplaced opcua.mappings loads as active top-level mappings', () => {
   const cfg = normalizeEdgeConfig({
     deviceName: 'gw',
