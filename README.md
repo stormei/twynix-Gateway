@@ -65,6 +65,9 @@ TB_API_KEY=YOUR_SCOPED_API_KEY
 TB_ALARM_DEFAULT_DEVICE_NAME=Machine001
 ```
 
+The same settings are available under **Connectivity → Alarms** in the admin UI. This page also
+exposes the REST request timeout and applies the OPC UA and ThingsBoard alarm settings together.
+
 The gateway performs an OPC UA Condition Refresh after connection and reconnection. Active conditions
 are restored in ThingsBoard, and stale gateway-managed ThingsBoard alarms are cleared when they are no
 longer present in the refreshed OPC UA condition set.

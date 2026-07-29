@@ -1226,6 +1226,11 @@ export function renderAdminUi(): string {
                           <span class="nav-menu-label">OPC UA</span>
                         </span>
                       </button>
+                      <button class="nav-menu-item" data-tab="alarms" type="button">
+                        <span class="nav-menu-text">
+                          <span class="nav-menu-label">Alarms</span>
+                        </span>
+                      </button>
                       <button class="nav-menu-item" data-tab="buffering" type="button">
                         <span class="nav-menu-text">
                           <span class="nav-menu-label">Buffering / Replay</span>
@@ -1394,18 +1399,6 @@ export function renderAdminUi(): string {
                     <input class="form-control" id="tbKeyPath" />
                   </label>
                   <label>
-                    ThingsBoard REST URL
-                    <input class="form-control" id="tbAlarmRestUrl" placeholder="http://thingsboard:8080" />
-                  </label>
-                  <label>
-                    Alarm REST API key
-                    <input class="form-control" id="tbAlarmApiKey" type="password" autocomplete="off" />
-                  </label>
-                  <label>
-                    Default alarm device name
-                    <input class="form-control" id="tbAlarmDefaultDeviceName" />
-                  </label>
-                  <label>
                     Minimum write interval (ms)
                     <input class="form-control" id="writeMinIntervalMs" type="number" min="0" />
                   </label>
@@ -1425,10 +1418,6 @@ export function renderAdminUi(): string {
                 <label class="checkbox">
                   <input id="tbRejectUnauthorized" type="checkbox" />
                   Reject unauthorized MQTT certificates
-                </label>
-                <label class="checkbox">
-                  <input id="tbAlarmSyncEnabled" type="checkbox" />
-                  Create and synchronize ThingsBoard alarms through REST
                 </label>
                 <div>
                   <button class="btn btn-primary" type="submit">Save MQTT / ThingsBoard</button>
@@ -1494,14 +1483,56 @@ export function renderAdminUi(): string {
                   <input id="opcSubscribe" type="checkbox" />
                   Enable subscription polling
                 </label>
-                <label class="checkbox">
-                  <input id="opcAlarmsEnabled" type="checkbox" />
-                  Subscribe to OPC UA Alarms &amp; Conditions
-                </label>
                 <div>
                   <button class="btn btn-primary" type="submit">Save OPC UA</button>
                 </div>
                 <div class="message" id="opcMessage"></div>
+              </form>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-alarms" class="hidden">
+            <div class="card">
+              <div class="card-body">
+              <div class="section-head">
+                <div>
+                  <h2 class="card-title mb-1">Alarm settings</h2>
+                  <p class="text-secondary mb-0">Subscribe to OPC UA Alarms &amp; Conditions and synchronize them directly with ThingsBoard.</p>
+                </div>
+              </div>
+              <form id="alarmForm">
+                <label class="checkbox">
+                  <input id="opcAlarmsEnabled" type="checkbox" />
+                  Subscribe to OPC UA Alarms &amp; Conditions
+                </label>
+                <label class="checkbox">
+                  <input id="tbAlarmSyncEnabled" type="checkbox" />
+                  Create, update, acknowledge, and clear ThingsBoard alarms through REST
+                </label>
+                <div class="form-grid">
+                  <label>
+                    ThingsBoard REST URL
+                    <input class="form-control" id="tbAlarmRestUrl" placeholder="http://thingsboard:8080" />
+                  </label>
+                  <label>
+                    Alarm REST API key
+                    <input class="form-control" id="tbAlarmApiKey" type="password" autocomplete="off" />
+                  </label>
+                  <label>
+                    Default alarm device name
+                    <input class="form-control" id="tbAlarmDefaultDeviceName" />
+                  </label>
+                  <label>
+                    REST request timeout (ms)
+                    <input class="form-control" id="tbAlarmRequestTimeoutMs" type="number" min="1000" max="120000" step="500" />
+                  </label>
+                </div>
+                <p class="hint">Mapped OPC UA sources use their configured ThingsBoard device. The default device is used when no mapping matches.</p>
+                <div>
+                  <button class="btn btn-primary" type="submit">Save alarm settings</button>
+                </div>
+                <div class="message" id="alarmMessage"></div>
               </form>
               </div>
             </div>
@@ -1849,10 +1880,12 @@ export function renderAdminUi(): string {
         statusDump: document.getElementById('statusDump'),
         tbForm: document.getElementById('tbForm'),
         opcForm: document.getElementById('opcForm'),
+        alarmForm: document.getElementById('alarmForm'),
         throttleForm: document.getElementById('throttleForm'),
         passwordForm: document.getElementById('passwordForm'),
         tbMessage: document.getElementById('tbMessage'),
         opcMessage: document.getElementById('opcMessage'),
+        alarmMessage: document.getElementById('alarmMessage'),
         throttleMessage: document.getElementById('throttleMessage'),
         throttleConservativePreset: document.getElementById('throttleConservativePreset'),
         throttleDefaultPreset: document.getElementById('throttleDefaultPreset'),
@@ -1919,6 +1952,7 @@ export function renderAdminUi(): string {
         status: document.getElementById('tab-status'),
         thingsboard: document.getElementById('tab-thingsboard'),
         opcua: document.getElementById('tab-opcua'),
+        alarms: document.getElementById('tab-alarms'),
         buffering: document.getElementById('tab-buffering'),
         browser: document.getElementById('tab-browser'),
         admin: document.getElementById('tab-admin'),
@@ -2054,6 +2088,7 @@ export function renderAdminUi(): string {
         document.getElementById('tbAlarmRestUrl').value = cfg.tb.alarmApi?.restUrl || '';
         document.getElementById('tbAlarmApiKey').value = cfg.tb.alarmApi?.apiKey || '';
         document.getElementById('tbAlarmDefaultDeviceName').value = cfg.tb.alarmApi?.defaultDeviceName || cfg.deviceName || '';
+        document.getElementById('tbAlarmRequestTimeoutMs').value = String(cfg.tb.alarmApi?.requestTimeoutMs ?? 10000);
         document.getElementById('writeMinIntervalMs').value = String(cfg.writeMinIntervalMs ?? 100);
         document.getElementById('mqttFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
         document.getElementById('mqttFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
@@ -2728,14 +2763,7 @@ export function renderAdminUi(): string {
               caPath: document.getElementById('tbCaPath').value.trim(),
               certPath: document.getElementById('tbCertPath').value.trim(),
               keyPath: document.getElementById('tbKeyPath').value.trim(),
-              rejectUnauthorized: document.getElementById('tbRejectUnauthorized').checked,
-              alarmApi: {
-                enabled: document.getElementById('tbAlarmSyncEnabled').checked,
-                restUrl: document.getElementById('tbAlarmRestUrl').value.trim(),
-                apiKey: document.getElementById('tbAlarmApiKey').value,
-                defaultDeviceName: document.getElementById('tbAlarmDefaultDeviceName').value.trim(),
-                requestTimeoutMs: state.config?.tb?.alarmApi?.requestTimeoutMs || 10000
-              }
+              rejectUnauthorized: document.getElementById('tbRejectUnauthorized').checked
             }
           };
 
@@ -2770,10 +2798,7 @@ export function renderAdminUi(): string {
               securityMode: document.getElementById('opcSecurityMode').value,
               certificateFile: document.getElementById('opcCertificateFile').value.trim(),
               privateKeyFile: document.getElementById('opcPrivateKeyFile').value.trim(),
-              subscribe: document.getElementById('opcSubscribe').checked,
-              alarms: {
-                enabled: document.getElementById('opcAlarmsEnabled').checked
-              }
+              subscribe: document.getElementById('opcSubscribe').checked
             }
           };
 
@@ -2790,6 +2815,44 @@ export function renderAdminUi(): string {
           }
         } catch (error) {
           if (!(error instanceof AuthExpiredError)) setMessage(els.opcMessage, error.message, 'error');
+        }
+      });
+
+      els.alarmForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setMessage(els.alarmMessage, '', '');
+        try {
+          if (!state.authenticated) throw new AuthExpiredError();
+          const patch = {
+            tb: {
+              alarmApi: {
+                enabled: document.getElementById('tbAlarmSyncEnabled').checked,
+                restUrl: document.getElementById('tbAlarmRestUrl').value.trim(),
+                apiKey: document.getElementById('tbAlarmApiKey').value,
+                defaultDeviceName: document.getElementById('tbAlarmDefaultDeviceName').value.trim(),
+                requestTimeoutMs: Number(document.getElementById('tbAlarmRequestTimeoutMs').value)
+              }
+            },
+            opcua: {
+              alarms: {
+                enabled: document.getElementById('opcAlarmsEnabled').checked
+              }
+            }
+          };
+
+          state.config = await api('/api/config', {
+            method: 'PUT',
+            body: JSON.stringify(patch)
+          });
+          renderConfig();
+          await loadStatus();
+          if (state.config.runtimeApplyError) {
+            setMessage(els.alarmMessage, 'Settings saved, but runtime apply failed: ' + state.config.runtimeApplyError, 'error');
+          } else {
+            setMessage(els.alarmMessage, 'Alarm settings saved and applied.', 'success');
+          }
+        } catch (error) {
+          if (!(error instanceof AuthExpiredError)) setMessage(els.alarmMessage, error.message, 'error');
         }
       });
 
