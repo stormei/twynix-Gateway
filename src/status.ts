@@ -18,7 +18,9 @@ export function sanitizedConfigSummary(cfg: EdgeConfig) {
       rejectUnauthorized: cfg.tb.rejectUnauthorized,
       cleanSession: cfg.tb.cleanSession,
       mappedDeviceTransport: cfg.tb.mappedDeviceTransport || 'gateway-api',
-      deviceCredentialCount: cfg.tb.deviceCredentials?.length || 0
+      deviceCredentialCount: cfg.tb.deviceCredentials?.length || 0,
+      alarmSyncEnabled: cfg.tb.alarmApi?.enabled === true,
+      alarmApiConfigured: !!cfg.tb.alarmApi?.restUrl && !!cfg.tb.alarmApi?.apiKey
     },
     opcua: {
       url: cfg.opcua.url,
@@ -34,7 +36,8 @@ export function sanitizedConfigSummary(cfg: EdgeConfig) {
       securityMode: cfg.opcua.securityMode,
       usernameConfigured: !!cfg.opcua.username,
       certificateConfigured: !!cfg.opcua.certificateFile,
-      applicationUriConfigured: !!cfg.opcua.applicationUri
+      applicationUriConfigured: !!cfg.opcua.applicationUri,
+      alarmSubscriptionEnabled: cfg.opcua.alarms?.enabled === true
     },
     mappingCount: cfg.mapping.length,
     mappedTargetDeviceCount: new Set(
@@ -77,6 +80,9 @@ export function gatewayStatusTelemetry(
     opcua_reconnect_count: Number(opcDiagnostics?.reconnectCount || 0),
     opcua_resubscribe_count: Number(opcDiagnostics?.resubscribeCount || 0),
     opcua_desired_tag_count: Number(opcDiagnostics?.desiredTagCount || 0),
+    opcua_alarm_monitoring_ready: Boolean(opcDiagnostics?.alarmMonitoringReady),
+    opcua_active_alarm_count: Number(opcDiagnostics?.activeAlarmCount || 0),
+    opcua_alarm_events_received: Number(opcDiagnostics?.alarmEventsReceived || 0),
     applied_config_version: configVersion(cfg),
     mapping_count: cfg.mapping.length,
     mapped_device_transport: cfg.tb.mappedDeviceTransport || 'gateway-api',
@@ -93,7 +99,10 @@ export function gatewayIdentityAttributes(cfg: EdgeConfig) {
       gatewayCapabilities: [
         'opcua.browse',
         'opcua.discoverVariables',
-        'opcua.mapping.sharedConfig'
+        'opcua.mapping.sharedConfig',
+        'opcua.alarms',
+        'opcua.alarms.acknowledge',
+        'thingsboard.alarms.restSync'
       ],
       opcuaEndpoints: [
         {
@@ -109,7 +118,10 @@ export function gatewayIdentityAttributes(cfg: EdgeConfig) {
     'edge.gatewayCapabilities': [
       'opcua.browse',
       'opcua.discoverVariables',
-      'opcua.mapping.sharedConfig'
+      'opcua.mapping.sharedConfig',
+      'opcua.alarms',
+      'opcua.alarms.acknowledge',
+      'thingsboard.alarms.restSync'
     ],
     'edge.opcuaEndpoints': [
       {

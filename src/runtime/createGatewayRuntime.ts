@@ -7,6 +7,7 @@ import { DeviceSessionRegistry } from '../tb/DeviceSessionRegistry.js';
 import { TbBridge } from '../tb/TbBridge.js';
 import { TelemetryPublisher } from '../tb/TelemetryPublisher.js';
 import { ThingsBoardGatewayApi } from '../tb/ThingsBoardGatewayApi.js';
+import { ThingsBoardAlarmSync } from '../tb/ThingsBoardAlarmSync.js';
 import { ConfigApplyStatus, DesiredConfigUpdate, EdgeConfig, RpcRequest, TagSpec } from '../types.js';
 import type { GatewayRuntime } from './GatewayRuntime.js';
 
@@ -55,7 +56,11 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
   const tbGateway = new ThingsBoardGatewayApi(mqtt, cfg.mapping, cfg.deviceName);
   let telemetryPublisher = new TelemetryPublisher(mqtt, devices, tbGateway, activeCfg.tb.mappedDeviceTransport || 'gateway-api');
   const opc = new OpcUaClient(cfg.opcua);
+  const alarmSync = cfg.tb.alarmApi?.enabled
+    ? new ThingsBoardAlarmSync(cfg, fetch, (conditionId, comment) => opc.acknowledgeAlarm(conditionId, comment))
+    : undefined;
   let statusInterval: NodeJS.Timeout | undefined;
+  let alarmAckInterval: NodeJS.Timeout | undefined;
   let opcSetupGeneration = 0;
   const deliveryMetrics = {
     opcSamplesReceived: 0,
@@ -67,7 +72,12 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
     lastTelemetryPublishErrorAt: null as number | null,
     lastTelemetryPublishError: null as string | null,
     lastTelemetryKey: null as string | null,
-    lastTelemetryTarget: null as string | null
+    lastTelemetryTarget: null as string | null,
+    opcAlarmEventsReceived: 0,
+    alarmSyncSuccess: 0,
+    alarmSyncFailures: 0,
+    lastAlarmSyncAt: null as number | null,
+    lastAlarmSyncError: null as string | null
   };
 
   try {
@@ -87,8 +97,9 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       const generation = ++opcSetupGeneration;
       const readableMappings = activeCfg.mapping.filter((tag) => tag.read?.enabled !== false);
 
-      const setup = activeCfg.opcua.subscribe
-        ? opc.subscribe(readableMappings, activeCfg.opcua.samplingMs, async (mapping, value) => {
+      const setup = (async () => {
+        if (activeCfg.opcua.subscribe) {
+          await opc.subscribe(readableMappings, activeCfg.opcua.samplingMs, async (mapping, value) => {
             const now = Date.now();
             deliveryMetrics.opcSamplesReceived += 1;
             deliveryMetrics.lastOpcSampleAt = now;
@@ -107,8 +118,34 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
               deliveryMetrics.lastTelemetryPublishError = error?.message || String(error);
               logger.error({ msg: 'Telemetry publish failed', key: mapping.key, error: deliveryMetrics.lastTelemetryPublishError });
             }
-          })
-        : opc.connect();
+          });
+        } else {
+          await opc.connect();
+        }
+
+        if (activeCfg.opcua.alarms?.enabled && alarmSync) {
+          await opc.subscribeAlarms(
+            async (alarm) => {
+              deliveryMetrics.opcAlarmEventsReceived += 1;
+              try {
+                await alarmSync.process(alarm);
+                deliveryMetrics.alarmSyncSuccess += 1;
+                deliveryMetrics.lastAlarmSyncAt = Date.now();
+                deliveryMetrics.lastAlarmSyncError = null;
+              } catch (error: any) {
+                deliveryMetrics.alarmSyncFailures += 1;
+                deliveryMetrics.lastAlarmSyncError = error?.message || String(error);
+                logger.error({
+                  msg: 'OPC UA alarm synchronization failed',
+                  conditionId: alarm.conditionId,
+                  error: deliveryMetrics.lastAlarmSyncError
+                });
+              }
+            },
+            (activeAlarms) => alarmSync.reconcile(activeAlarms)
+          );
+        }
+      })();
 
       setup
         .then(async () => {
@@ -147,6 +184,8 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
           case 'writeTag':
           case 'readTag':
             return await rpcExec.handle(req);
+          case 'acknowledgeAlarm':
+            return await acknowledgeAlarmRpc(opc, req);
           case 'applyConfig':
             return await handlers.onApplyStoredConfig();
           case 'opcuaBrowse': {
@@ -182,9 +221,11 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
     );
 
     devices.startRpcHandlers(async (identity, _reqId, req) => {
+      if (req.method === 'acknowledgeAlarm') return acknowledgeAlarmRpc(opc, req);
       return await rpcExec.handleMappedDeviceRpc(identity, req);
     });
     tbGateway.startRpcHandlers(async (identity, _reqId, req) => {
+      if (req.method === 'acknowledgeAlarm') return acknowledgeAlarmRpc(opc, req);
       return await rpcExec.handleMappedDeviceRpc(identity, req);
     });
     await tbGateway.connectMappedDevices();
@@ -198,6 +239,13 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
         logger.warn({ msg: 'Gateway status telemetry publish failed', error: error?.message || String(error) });
       });
     }, 30_000);
+    if (alarmSync) {
+      alarmAckInterval = setInterval(() => {
+        alarmSync.pollAcknowledgements().catch((error: any) => {
+          logger.warn({ msg: 'ThingsBoard alarm acknowledgement poll failed', error: error?.message || String(error) });
+        });
+      }, 5000);
+    }
 
     const runtimeObject: GatewayRuntime = {
       cfg: activeCfg,
@@ -206,7 +254,10 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       tb,
       opc,
       getRpcStats: () => rpcExec.getStats(),
-      getDeliveryMetrics: () => ({ ...deliveryMetrics }),
+      getDeliveryMetrics: () => ({
+        ...deliveryMetrics,
+        alarmSync: alarmSync?.getDiagnostics() || { enabled: false }
+      }),
       updateConfigHot: async (nextCfg: EdgeConfig) => {
         activeCfg = nextCfg;
         runtimeObject.cfg = nextCfg;
@@ -214,6 +265,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
         devices = new DeviceSessionRegistry(activeCfg, activeCfg.mapping);
         oldDevices.close();
         devices.startRpcHandlers(async (identity, _reqId, req) => {
+          if (req.method === 'acknowledgeAlarm') return acknowledgeAlarmRpc(opc, req);
           return await rpcExec.handleMappedDeviceRpc(identity, req);
         });
         tbGateway.setMappings(activeCfg.mapping);
@@ -230,6 +282,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       close: async () => {
         logger.info({ msg: 'Closing runtime', deviceName: cfg.deviceName, tbUrl: cfg.tb.url, opcuaUrl: cfg.opcua.url });
         if (statusInterval) clearInterval(statusInterval);
+        if (alarmAckInterval) clearInterval(alarmAckInterval);
         tb.close();
         devices.close();
         await opc.close();
@@ -240,10 +293,19 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
     return runtimeObject;
   } catch (error) {
     if (statusInterval) clearInterval(statusInterval);
+    if (alarmAckInterval) clearInterval(alarmAckInterval);
     tb.close();
     devices.close();
     await opc.close().catch(() => undefined);
     mqtt.end();
     throw error;
   }
+}
+
+async function acknowledgeAlarmRpc(opc: OpcUaClient, req: RpcRequest) {
+  const conditionId = String(req.params?.conditionId || '').trim();
+  if (!conditionId) return { ok: false, code: 'BAD_TYPE', error: 'params.conditionId is required' };
+  const comment = String(req.params?.comment || 'Acknowledged from ThingsBoard');
+  const status = await opc.acknowledgeAlarm(conditionId, comment);
+  return { ok: true, code: 'OK', conditionId, status, ts: Date.now() };
 }

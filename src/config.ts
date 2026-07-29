@@ -32,7 +32,14 @@ function buildDefaultConfig(): EdgeConfig {
       rejectUnauthorized: String(process.env.TB_REJECT_UNAUTHORIZED || 'true') === 'true',
       cleanSession: String(process.env.MQTT_CLEAN_SESSION || 'true') !== 'false',
       mappedDeviceTransport: (process.env.TB_MAPPED_DEVICE_TRANSPORT === 'device-sessions' ? 'device-sessions' : 'gateway-api'),
-      deviceCredentials: parseDeviceCredentials()
+      deviceCredentials: parseDeviceCredentials(),
+      alarmApi: {
+        enabled: String(process.env.TB_ALARM_SYNC_ENABLED || 'false') === 'true',
+        restUrl: process.env.TB_REST_URL || '',
+        apiKey: process.env.TB_API_KEY || '',
+        requestTimeoutMs: Number(process.env.TB_ALARM_REQUEST_TIMEOUT_MS || 10000),
+        defaultDeviceName: process.env.TB_ALARM_DEFAULT_DEVICE_NAME || process.env.DEVICE_NAME || 'Machine001'
+      }
     },
     opcua: {
       url: process.env.OPCUA_URL || 'opc.tcp://127.0.0.1:49320',
@@ -48,7 +55,10 @@ function buildDefaultConfig(): EdgeConfig {
       publishRequestPipeline: Number(process.env.OPCUA_PUBLISH_REQUEST_PIPELINE || 1),
       securityPolicy: 'None',
       securityMode: 'None',
-      applicationUri: process.env.OPCUA_APPLICATION_URI || undefined
+      applicationUri: process.env.OPCUA_APPLICATION_URI || undefined,
+      alarms: {
+        enabled: String(process.env.OPCUA_ALARMS_ENABLED || process.env.TB_ALARM_SYNC_ENABLED || 'false') === 'true'
+      }
     },
     mapping: defaultMapping.map(tag => normalizeMapping(tag)),
     sqlitePath: process.env.SQLITE_PATH || './data/messages.db',
@@ -84,10 +94,18 @@ function normalizeConfig(cfg: EdgeConfig): EdgeConfig {
       deviceCredentials: Array.isArray(cfg.tb?.deviceCredentials)
         ? cfg.tb.deviceCredentials.map((credential) => ({ ...credential }))
         : defaults.tb.deviceCredentials,
+      alarmApi: {
+        ...defaults.tb.alarmApi!,
+        ...(cfg.tb?.alarmApi || {})
+      }
     },
     opcua: {
       ...defaults.opcua,
       ...opcua,
+      alarms: {
+        ...defaults.opcua.alarms!,
+        ...(opcua.alarms || {})
+      }
     },
     mapping: incomingMappings.map((tag: any) => normalizeMapping(tag)),
     mqttFlushBatchSize: Number.isFinite(cfg.mqttFlushBatchSize)
@@ -181,6 +199,20 @@ export function validateConfig(cfg: EdgeConfig) {
   if (cfg.tb.cleanSession !== undefined && typeof cfg.tb.cleanSession !== 'boolean') {
     throw new Error('tb.cleanSession must be a boolean');
   }
+  if (cfg.tb.alarmApi?.enabled) {
+    if (!cfg.tb.alarmApi.restUrl || !/^https?:\/\//i.test(cfg.tb.alarmApi.restUrl)) {
+      throw new Error('tb.alarmApi.restUrl must be an http(s) URL when alarm sync is enabled');
+    }
+    if (!cfg.tb.alarmApi.apiKey || typeof cfg.tb.alarmApi.apiKey !== 'string') {
+      throw new Error('tb.alarmApi.apiKey is required when alarm sync is enabled');
+    }
+  }
+  if (
+    cfg.tb.alarmApi?.requestTimeoutMs !== undefined &&
+    (!Number.isFinite(cfg.tb.alarmApi.requestTimeoutMs) || cfg.tb.alarmApi.requestTimeoutMs < 1000)
+  ) {
+    throw new Error('tb.alarmApi.requestTimeoutMs must be at least 1000');
+  }
 
   if (!cfg.opcua || typeof cfg.opcua !== 'object') throw new Error('opcua section is required');
   if (!cfg.opcua.url || typeof cfg.opcua.url !== 'string') throw new Error('opcua.url is required');
@@ -210,6 +242,9 @@ export function validateConfig(cfg: EdgeConfig) {
   }
   if (cfg.opcua.applicationUri !== undefined && typeof cfg.opcua.applicationUri !== 'string') {
     throw new Error('opcua.applicationUri must be a string');
+  }
+  if (cfg.opcua.alarms?.enabled !== undefined && typeof cfg.opcua.alarms.enabled !== 'boolean') {
+    throw new Error('opcua.alarms.enabled must be a boolean');
   }
   if (!Array.isArray(cfg.mapping)) throw new Error('mapping must be an array');
 

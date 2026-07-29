@@ -14,7 +14,12 @@ function cfg(overrides: Partial<EdgeConfig> = {}): EdgeConfig {
       clientId: 'gw-client',
       qos: 1,
       mappedDeviceTransport: 'gateway-api',
-      deviceCredentials: [{ thingsBoardDeviceName: 'Pump A', accessToken: 'target-secret' }]
+      deviceCredentials: [{ thingsBoardDeviceName: 'Pump A', accessToken: 'target-secret' }],
+      alarmApi: {
+        enabled: false,
+        restUrl: 'http://thingsboard:8080',
+        apiKey: 'alarm-api-secret'
+      }
     },
     opcua: {
       url: 'opc.tcp://localhost:4840',
@@ -47,6 +52,7 @@ test('gateway identity attributes publish sanitized config summary without secre
   assert.equal(text.includes('secret-token'), false);
   assert.equal(text.includes('target-secret'), false);
   assert.equal(text.includes('opc-secret'), false);
+  assert.equal(text.includes('alarm-api-secret'), false);
   assert.equal(attrs.edge.config.mqttFlushBatchSize, 200);
 });
 

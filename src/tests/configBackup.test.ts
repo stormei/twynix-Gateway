@@ -73,6 +73,11 @@ test('ThingsBoard backup attributes can be extracted from client response shape'
 test('redacted config backup removes secrets and marks metadata', () => {
   const source = cfg();
   source.opcua.password = 'secret';
+  source.tb.alarmApi = {
+    enabled: true,
+    restUrl: 'http://thingsboard:8080',
+    apiKey: 'alarm-api-secret'
+  };
   source.tb.deviceCredentials = [{ thingsBoardDeviceName: 'child', accessToken: 'child-token' }];
 
   const backup = createConfigBackupEnvelope(source, 'test', { redactSecrets: true });
@@ -80,6 +85,7 @@ test('redacted config backup removes secrets and marks metadata', () => {
   assert.equal(backup.containsSecrets, false);
   assert.equal(backup.redacted, true);
   assert.equal(backup.config.tb.accessToken, '<redacted>');
+  assert.equal(backup.config.tb.alarmApi?.apiKey, '<redacted>');
   assert.equal(backup.config.opcua.password, '<redacted>');
   assert.equal(backup.config.tb.deviceCredentials?.[0].accessToken, '<redacted>');
 });

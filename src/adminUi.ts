@@ -1394,6 +1394,18 @@ export function renderAdminUi(): string {
                     <input class="form-control" id="tbKeyPath" />
                   </label>
                   <label>
+                    ThingsBoard REST URL
+                    <input class="form-control" id="tbAlarmRestUrl" placeholder="http://thingsboard:8080" />
+                  </label>
+                  <label>
+                    Alarm REST API key
+                    <input class="form-control" id="tbAlarmApiKey" type="password" autocomplete="off" />
+                  </label>
+                  <label>
+                    Default alarm device name
+                    <input class="form-control" id="tbAlarmDefaultDeviceName" />
+                  </label>
+                  <label>
                     Minimum write interval (ms)
                     <input class="form-control" id="writeMinIntervalMs" type="number" min="0" />
                   </label>
@@ -1413,6 +1425,10 @@ export function renderAdminUi(): string {
                 <label class="checkbox">
                   <input id="tbRejectUnauthorized" type="checkbox" />
                   Reject unauthorized MQTT certificates
+                </label>
+                <label class="checkbox">
+                  <input id="tbAlarmSyncEnabled" type="checkbox" />
+                  Create and synchronize ThingsBoard alarms through REST
                 </label>
                 <div>
                   <button class="btn btn-primary" type="submit">Save MQTT / ThingsBoard</button>
@@ -1477,6 +1493,10 @@ export function renderAdminUi(): string {
                 <label class="checkbox">
                   <input id="opcSubscribe" type="checkbox" />
                   Enable subscription polling
+                </label>
+                <label class="checkbox">
+                  <input id="opcAlarmsEnabled" type="checkbox" />
+                  Subscribe to OPC UA Alarms &amp; Conditions
                 </label>
                 <div>
                   <button class="btn btn-primary" type="submit">Save OPC UA</button>
@@ -2031,6 +2051,9 @@ export function renderAdminUi(): string {
         document.getElementById('tbCaPath').value = cfg.tb.caPath || '';
         document.getElementById('tbCertPath').value = cfg.tb.certPath || '';
         document.getElementById('tbKeyPath').value = cfg.tb.keyPath || '';
+        document.getElementById('tbAlarmRestUrl').value = cfg.tb.alarmApi?.restUrl || '';
+        document.getElementById('tbAlarmApiKey').value = cfg.tb.alarmApi?.apiKey || '';
+        document.getElementById('tbAlarmDefaultDeviceName').value = cfg.tb.alarmApi?.defaultDeviceName || cfg.deviceName || '';
         document.getElementById('writeMinIntervalMs').value = String(cfg.writeMinIntervalMs ?? 100);
         document.getElementById('mqttFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
         document.getElementById('mqttFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
@@ -2039,6 +2062,7 @@ export function renderAdminUi(): string {
         document.getElementById('throttleFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
         document.getElementById('throttleFlushIntervalMs').value = String(cfg.mqttFlushIntervalMs ?? 15000);
         document.getElementById('tbRejectUnauthorized').checked = cfg.tb.rejectUnauthorized !== false;
+        document.getElementById('tbAlarmSyncEnabled').checked = cfg.tb.alarmApi?.enabled === true;
 
         document.getElementById('opcUrl').value = cfg.opcua.url || '';
         document.getElementById('opcUsername').value = cfg.opcua.username || '';
@@ -2049,6 +2073,7 @@ export function renderAdminUi(): string {
         document.getElementById('opcCertificateFile').value = cfg.opcua.certificateFile || '';
         document.getElementById('opcPrivateKeyFile').value = cfg.opcua.privateKeyFile || '';
         document.getElementById('opcSubscribe').checked = cfg.opcua.subscribe !== false;
+        document.getElementById('opcAlarmsEnabled').checked = cfg.opcua.alarms?.enabled === true;
         renderMappingList();
       }
 
@@ -2703,7 +2728,14 @@ export function renderAdminUi(): string {
               caPath: document.getElementById('tbCaPath').value.trim(),
               certPath: document.getElementById('tbCertPath').value.trim(),
               keyPath: document.getElementById('tbKeyPath').value.trim(),
-              rejectUnauthorized: document.getElementById('tbRejectUnauthorized').checked
+              rejectUnauthorized: document.getElementById('tbRejectUnauthorized').checked,
+              alarmApi: {
+                enabled: document.getElementById('tbAlarmSyncEnabled').checked,
+                restUrl: document.getElementById('tbAlarmRestUrl').value.trim(),
+                apiKey: document.getElementById('tbAlarmApiKey').value,
+                defaultDeviceName: document.getElementById('tbAlarmDefaultDeviceName').value.trim(),
+                requestTimeoutMs: state.config?.tb?.alarmApi?.requestTimeoutMs || 10000
+              }
             }
           };
 
@@ -2738,7 +2770,10 @@ export function renderAdminUi(): string {
               securityMode: document.getElementById('opcSecurityMode').value,
               certificateFile: document.getElementById('opcCertificateFile').value.trim(),
               privateKeyFile: document.getElementById('opcPrivateKeyFile').value.trim(),
-              subscribe: document.getElementById('opcSubscribe').checked
+              subscribe: document.getElementById('opcSubscribe').checked,
+              alarms: {
+                enabled: document.getElementById('opcAlarmsEnabled').checked
+              }
             }
           };
 

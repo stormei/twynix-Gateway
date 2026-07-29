@@ -28,6 +28,27 @@ export interface OpcUaDiscoverVariablesResult {
   maxNodes: number;
 }
 
+export type ThingsBoardAlarmSeverity = 'CRITICAL' | 'MAJOR' | 'MINOR' | 'WARNING' | 'INDETERMINATE';
+
+export interface OpcUaAlarmEvent {
+  conditionId: string;
+  eventId: string;
+  eventType: string;
+  sourceNode: string;
+  sourceName: string;
+  conditionName: string;
+  message: string;
+  severity: number;
+  active: boolean;
+  acknowledged: boolean;
+  confirmed?: boolean;
+  retain: boolean;
+  state?: string;
+  branchId?: string;
+  time: number;
+  receiveTime?: number;
+}
+
 export interface TagSpec {
   key: string;
   nodeId: string;
@@ -100,6 +121,13 @@ export interface EdgeConfig {
     cleanSession?: boolean;
     mappedDeviceTransport?: 'gateway-api' | 'device-sessions';
     deviceCredentials?: DeviceCredential[];
+    alarmApi?: {
+      enabled: boolean;
+      restUrl: string;
+      apiKey: string;
+      requestTimeoutMs?: number;
+      defaultDeviceName?: string;
+    };
   };
   opcua: {
     url: string;
@@ -118,6 +146,9 @@ export interface EdgeConfig {
     certificateFile?: string;
     privateKeyFile?: string;
     applicationUri?: string;
+    alarms?: {
+      enabled: boolean;
+    };
   };
   mapping: TagSpec[];
   sqlitePath: string;

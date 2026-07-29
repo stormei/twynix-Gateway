@@ -8,7 +8,11 @@ import {
   MonitoringParametersOptions,
   MessageSecurityMode,
   NodeClass,
-  SecurityPolicy
+  SecurityPolicy,
+  installAlarmMonitoring,
+  uninstallAlarmMonitoring,
+  type ClientAlarm,
+  type ClientAlarmList
 } from 'node-opcua';
 import { ClientSidePublishEngine } from 'node-opcua-client';
 import {
@@ -17,11 +21,14 @@ import {
   OpcUaBrowseNode,
   DataTypeName,
   OpcUaDiscoveredVariable,
-  OpcUaDiscoverVariablesResult
+  OpcUaDiscoverVariablesResult,
+  OpcUaAlarmEvent
 } from '../types.js';
 import { logger } from '../logger.js';
 
 type OnChange = (tag: TagSpec, value: any) => void;
+type OnAlarm = (alarm: OpcUaAlarmEvent) => void | Promise<void>;
+type OnAlarmSnapshot = (alarms: OpcUaAlarmEvent[]) => void | Promise<void>;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,6 +89,57 @@ function statusCodeText(status: any): string {
   return String(status);
 }
 
+function alarmField(alarm: ClientAlarm, path: string): any {
+  let current: any = alarm.fields;
+  for (const part of path.split('.')) {
+    current = current?.[part];
+  }
+  return current?.value;
+}
+
+function textValue(value: any): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value?.text === 'string') return value.text;
+  return typeof value?.toString === 'function' ? value.toString() : String(value);
+}
+
+function timestampValue(value: any, fallback = Date.now()): number {
+  if (value instanceof Date) return value.getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function toOpcUaAlarmEvent(alarm: ClientAlarm): OpcUaAlarmEvent {
+  const activeState = alarmField(alarm, 'activeState.id');
+  const ackedState = alarmField(alarm, 'ackedState.id');
+  const confirmedState = alarmField(alarm, 'confirmedState.id');
+  const eventId = alarm.eventId;
+  const time = alarmField(alarm, 'time');
+  const receiveTime = alarmField(alarm, 'receiveTime');
+
+  return {
+    conditionId: alarm.conditionId.toString(),
+    eventId: Buffer.isBuffer(eventId) ? eventId.toString('hex') : textValue(eventId),
+    eventType: alarm.eventType.toString(),
+    sourceNode: textValue(alarmField(alarm, 'sourceNode')),
+    sourceName: textValue(alarmField(alarm, 'sourceName')),
+    conditionName: textValue(alarmField(alarm, 'conditionName')),
+    message: textValue(alarmField(alarm, 'message')),
+    severity: Number(alarmField(alarm, 'severity') ?? 0),
+    active: Boolean(activeState),
+    acknowledged: Boolean(ackedState),
+    ...(confirmedState === undefined ? {} : { confirmed: Boolean(confirmedState) }),
+    retain: Boolean(alarmField(alarm, 'retain')),
+    state:
+      textValue(alarmField(alarm, 'limitState.currentState')) ||
+      textValue(alarmField(alarm, 'activeState')),
+    branchId: textValue(alarmField(alarm, 'branchId')) || undefined,
+    time: timestampValue(time),
+    ...(receiveTime === undefined ? {} : { receiveTime: timestampValue(receiveTime) })
+  };
+}
+
 function waitForSubscriptionStarted(subscription: ClientSubscription, timeoutMs = 10000): Promise<void> {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -109,6 +167,8 @@ export class OpcUaClient {
   private client!: OPCUAClient;
   private session: any;
   private subscription?: ClientSubscription;
+  private alarmList?: ClientAlarmList;
+  private alarmsByConditionId = new Map<string, ClientAlarm>();
   private lastError?: string;
 
   private closing = false;
@@ -132,6 +192,10 @@ export class OpcUaClient {
   private desiredTags: TagSpec[] = [];
   private desiredSamplingMs = 1000;
   private desiredOnChange?: OnChange;
+  private desiredOnAlarm?: OnAlarm;
+  private desiredOnAlarmSnapshot?: OnAlarmSnapshot;
+  private alarmEventsReceived = 0;
+  private lastAlarmEventTs?: number;
 
   constructor(private cfg: EdgeConfig['opcua']) {}
 
@@ -250,6 +314,60 @@ export class OpcUaClient {
 
     await this.ensureConnected();
     await this.setupSubscription(tags, samplingMs, onChange);
+  }
+
+  async subscribeAlarms(onAlarm: OnAlarm, onSnapshot?: OnAlarmSnapshot): Promise<void> {
+    this.desiredOnAlarm = onAlarm;
+    this.desiredOnAlarmSnapshot = onSnapshot;
+    await this.ensureConnected();
+    await this.setupAlarmMonitoring(onAlarm, onSnapshot);
+  }
+
+  private async setupAlarmMonitoring(onAlarm: OnAlarm, onSnapshot?: OnAlarmSnapshot): Promise<void> {
+    if (!this.session) throw new Error('OPC UA session not initialized');
+    if (this.alarmList) {
+      this.alarmList.removeAllListeners('alarmChanged');
+      this.alarmList.removeAllListeners('alarmDeleted');
+    }
+
+    const alarmList = await installAlarmMonitoring(this.session);
+    this.alarmList = alarmList;
+    this.alarmsByConditionId.clear();
+
+    const handleAlarm = (alarm: ClientAlarm) => {
+      this.alarmsByConditionId.set(alarm.conditionId.toString(), alarm);
+      const event = toOpcUaAlarmEvent(alarm);
+      this.alarmEventsReceived += 1;
+      this.lastAlarmEventTs = Date.now();
+      Promise.resolve(onAlarm(event)).catch((error: any) => {
+        logger.error({
+          msg: 'OPC UA alarm handler failed',
+          conditionId: event.conditionId,
+          error: error?.message || String(error)
+        });
+      });
+    };
+
+    alarmList.on('alarmChanged', handleAlarm);
+    alarmList.on('alarmDeleted', (alarm) => {
+      this.alarmsByConditionId.delete(alarm.conditionId.toString());
+    });
+    if (onSnapshot) {
+      await sleep(25);
+      await onSnapshot(alarmList.alarms().map(toOpcUaAlarmEvent));
+    }
+    logger.info({ msg: 'OPC UA Alarm & Condition monitoring ready', activeConditions: alarmList.length });
+  }
+
+  async acknowledgeAlarm(conditionId: string, comment = 'Acknowledged from ThingsBoard'): Promise<string> {
+    await this.ensureConnected();
+    if (!this.session) throw new Error('OPC UA session not initialized');
+    const alarm = this.alarmsByConditionId.get(conditionId);
+    if (!alarm) throw new Error(`Unknown or inactive OPC UA condition: ${conditionId}`);
+    const status = await alarm.acknowledge(this.session, comment);
+    const statusText = statusCodeText(status);
+    if (statusText !== 'Good') throw new Error(`OPC UA alarm acknowledgement failed: ${statusText}`);
+    return statusText;
   }
 
   private async setupSubscription(tags: TagSpec[], samplingMs: number, onChange: OnChange) {
@@ -676,8 +794,11 @@ export class OpcUaClient {
       try {
         await this.safeCloseInternal();
         await this.ensureConnected();
-        if (this.desiredTags.length && this.desiredOnChange) {
+        if (this.desiredOnChange) {
           await this.setupSubscription(this.desiredTags, this.desiredSamplingMs, this.desiredOnChange);
+        }
+        if (this.desiredOnAlarm) {
+          await this.setupAlarmMonitoring(this.desiredOnAlarm, this.desiredOnAlarmSnapshot);
         }
       } catch (e: any) {
         logger.error({ msg: 'OPCUA reconnect attempt failed', error: e?.message || e });
@@ -690,7 +811,7 @@ export class OpcUaClient {
 
   private scheduleResubscribe(reason: string) {
     if (this.closing) return;
-    if (!this.desiredTags.length || !this.desiredOnChange) return;
+    if (!this.desiredOnChange) return;
     if (this.resubscribeTimer || this.reconnectTimer) return;
 
     const delay = Math.min(this.reconnectDelayMaxMs, this.resubscribeDelayMs);
@@ -735,6 +856,16 @@ export class OpcUaClient {
       // ignore
     }
     this.subscription = undefined;
+
+    try {
+      if (this.session && this.alarmList) {
+        await uninstallAlarmMonitoring(this.session);
+      }
+    } catch {
+      // ignore
+    }
+    this.alarmList = undefined;
+    this.alarmsByConditionId.clear();
 
     try {
       if (this.session) await this.session.close();
@@ -791,6 +922,10 @@ export class OpcUaClient {
       reconnectCount: this.reconnectCount,
       resubscribeCount: this.resubscribeCount,
       desiredTagCount: this.desiredTags.length,
+      alarmMonitoringReady: !!this.alarmList,
+      activeAlarmCount: this.alarmList?.length || 0,
+      alarmEventsReceived: this.alarmEventsReceived,
+      lastAlarmEventTs: this.lastAlarmEventTs,
       lastError: this.lastError
     };
   }

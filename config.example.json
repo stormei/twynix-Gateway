@@ -10,7 +10,14 @@
     "rejectUnauthorized": true,
     "cleanSession": true,
     "mappedDeviceTransport": "gateway-api",
-    "deviceCredentials": []
+    "deviceCredentials": [],
+    "alarmApi": {
+      "enabled": false,
+      "restUrl": "http://thingsboard.example.local:8080",
+      "apiKey": "REPLACE_WITH_SCOPED_THINGSBOARD_API_KEY",
+      "requestTimeoutMs": 10000,
+      "defaultDeviceName": "Machine001"
+    }
   },
   "opcua": {
     "url": "opc.tcp://opcua.example.local:49320",
@@ -26,7 +33,10 @@
     "publishRequestPipeline": 1,
     "securityPolicy": "None",
     "securityMode": "None",
-    "applicationUri": "urn:twynix:opcua-gateway:Machine001"
+    "applicationUri": "urn:twynix:opcua-gateway:Machine001",
+    "alarms": {
+      "enabled": false
+    }
   },
   "mapping": [
     {

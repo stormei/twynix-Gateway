@@ -39,7 +39,60 @@ Write a shared attribute:
   }
 }
 ```
+
 The gateway persists to `config.json` and confirms via client attributes `edge.config`.
+
+## OPC UA alarms to ThingsBoard
+
+The gateway can subscribe to full OPC UA Alarm & Condition events and create, update, acknowledge, and
+clear ThingsBoard alarms directly. ThingsBoard alarm rules are not required for this mode.
+
+Requirements:
+
+- An OPC UA server exposing `AlarmConditionType` conditions through the Server event notifier.
+- ThingsBoard 4.3 or later for long-lived REST API keys.
+- A scoped ThingsBoard API key allowed to read devices and manage alarms.
+- Each mapped OPC UA source should have a ThingsBoard target device ID or exact device name. Unmapped
+  alarm sources use `TB_ALARM_DEFAULT_DEVICE_NAME`.
+
+Enable the integration in `.env`:
+
+```bash
+OPCUA_ALARMS_ENABLED=true
+TB_ALARM_SYNC_ENABLED=true
+TB_REST_URL=http://YOUR_THINGSBOARD_HOST:8080
+TB_API_KEY=YOUR_SCOPED_API_KEY
+TB_ALARM_DEFAULT_DEVICE_NAME=Machine001
+```
+
+The gateway performs an OPC UA Condition Refresh after connection and reconnection. Active conditions
+are restored in ThingsBoard, and stale gateway-managed ThingsBoard alarms are cleared when they are no
+longer present in the refreshed OPC UA condition set.
+
+Severity mapping:
+
+```text
+OPC UA >= 900  -> ThingsBoard CRITICAL
+OPC UA >= 800  -> ThingsBoard MAJOR
+OPC UA >= 600  -> ThingsBoard WARNING
+OPC UA >= 300  -> ThingsBoard MINOR
+lower/unknown  -> ThingsBoard INDETERMINATE
+```
+
+Acknowledging an alarm in ThingsBoard is polled back to OPC UA every five seconds. The gateway also
+accepts this server-side RPC:
+
+```json
+{
+  "method": "acknowledgeAlarm",
+  "params": {
+    "conditionId": "ns=1;s=A1.L1.M1.Temperature.Alarm",
+    "comment": "Checked by operator"
+  }
+}
+```
+
+The REST API key is a secret. It is removed from redacted backups and diagnostic configuration summaries.
 
 ## RPC writes
 
