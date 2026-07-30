@@ -76,7 +76,15 @@ in the gateway admin UI.
 The gateway performs OPC UA Condition Refresh after connection and reconnection. It persists the last
 active condition set and ThingsBoard alarm IDs under `/data`, suppresses repeated events with no
 meaningful state change, and directly clears a previously active condition missing from the refreshed
-snapshot. The stable originator and alarm type ensure updates target the same native alarm.
+snapshot. Native alarm identity is strictly the ThingsBoard originator plus OPC UA `conditionId`.
+`branchId` and `eventId` are stored in alarm details and never participate in the alarm type. Active
+events update the persisted ThingsBoard alarm ID; the active-to-normal transition clears that same ID.
+Condition Refresh migrates older branch-specific state by updating the existing alarm ID instead of
+creating a replacement alarm.
+
+This operational alarm path consumes the current OPC UA condition state only. Historical OPC UA
+events are not converted into new native alarms; store event history separately in an oplog, telemetry
+store, or IoTDB integration when historical analysis is required.
 
 Default severity mapping is aligned with Twynix simulator severities and is configurable in the admin
 UI or through `TB_ALARM_*_MIN` environment variables:

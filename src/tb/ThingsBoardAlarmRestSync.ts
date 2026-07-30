@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'fs-extra';
 import { logger } from '../logger.js';
@@ -35,11 +34,11 @@ type TrackedAlarm = {
 };
 
 type PersistedAlarmState = {
-  schemaVersion: 'twynix.opcua-alarm-rest-state.v1';
+  schemaVersion: 'twynix.opcua-alarm-rest-state.v2';
   active: Record<string, TrackedAlarm>;
 };
 
-const STATE_SCHEMA_VERSION = 'twynix.opcua-alarm-rest-state.v1' as const;
+const STATE_SCHEMA_VERSION = 'twynix.opcua-alarm-rest-state.v2' as const;
 const EVENT_SCHEMA_VERSION = 'twynix.opcua-alarm.v1' as const;
 
 function severityMapping(cfg: EdgeConfig) {
@@ -65,22 +64,23 @@ export function sourceMapping(event: Pick<OpcUaAlarmEvent, 'sourceNode'>, mappin
   return mappings.find((mapping) => (mapping.opcua?.nodeId || mapping.nodeId) === event.sourceNode);
 }
 
-function conditionIdentity(event: Pick<OpcUaAlarmEvent, 'conditionId' | 'branchId' | 'sourceNode' | 'eventType'>): string {
+function conditionIdFor(event: Pick<OpcUaAlarmEvent, 'conditionId'>): string {
   const condition = String(event.conditionId || '').trim();
-  const source = String(event.sourceNode || '').trim();
-  const eventType = String(event.eventType || '').trim();
-  if (!condition && !source) throw new Error('OPC UA alarm requires conditionId or sourceNode');
-  return `${condition || `${source}|${eventType}`}|${String(event.branchId || '')}`;
+  if (!condition) throw new Error('OPC UA alarm requires conditionId');
+  return condition;
 }
 
 export function alarmType(event: OpcUaAlarmEvent): string {
-  const identity = conditionIdentity(event);
-  const digest = crypto.createHash('sha256').update(identity).digest('hex').slice(0, 24);
-  const label = String(event.conditionName || event.sourceName || 'Condition')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160);
-  return `OPC UA ${label || 'Condition'} [${digest}]`;
+  return `OPC UA ${conditionIdFor(event)}`;
+}
+
+function stableIdentity(
+  conditionId: string,
+  originator: NormalizedAlarmEvent['originator']
+): string {
+  const originatorKey = originator.deviceId || originator.deviceName;
+  if (!originatorKey) throw new Error('OPC UA alarm requires a ThingsBoard originator');
+  return `${originator.mode}:${originatorKey}|${conditionId}`;
 }
 
 function eventTimestamp(value: unknown, fallback: number): number {
@@ -98,19 +98,26 @@ export function normalizeAlarmEvent(event: OpcUaAlarmEvent, cfg: EdgeConfig, now
   if (typeof event.active !== 'boolean') throw new Error('OPC UA alarm active must be a boolean');
   if (!Number.isFinite(Number(event.severity))) throw new Error('OPC UA alarm severity must be numeric');
 
-  const identity = conditionIdentity(event);
+  const conditionId = conditionIdFor(event);
   const mapped = sourceMapping(event, cfg.mapping);
   const mode = mapped ? targetMode(mapped) : 'gateway-device';
   const defaultDeviceName = cfg.tb.alarmApi?.defaultDeviceName || cfg.deviceName;
   const eventTs = eventTimestamp(event.time, now);
   const receiveTs = eventTimestamp(event.receiveTime, now);
+  const originator: NormalizedAlarmEvent['originator'] = {
+    mode,
+    deviceId: mapped?.target?.thingsBoardDeviceId,
+    deviceName: mode === 'gateway-device'
+      ? defaultDeviceName
+      : mapped?.target?.thingsBoardDeviceName
+  };
 
   return {
     schemaVersion: EVENT_SCHEMA_VERSION,
-    identity,
+    identity: stableIdentity(conditionId, originator),
     alarmType: alarmType(event),
     eventId: String(event.eventId || ''),
-    conditionId: String(event.conditionId || ''),
+    conditionId,
     branchId: normalizeStatus(event.branchId),
     eventType: String(event.eventType || ''),
     sourceNodeId: String(event.sourceNode || ''),
@@ -128,13 +135,7 @@ export function normalizeAlarmEvent(event: OpcUaAlarmEvent, cfg: EdgeConfig, now
     receiveTs,
     quality: normalizeStatus(event.quality),
     status: normalizeStatus(event.status),
-    originator: {
-      mode,
-      deviceId: mapped?.target?.thingsBoardDeviceId,
-      deviceName: mode === 'gateway-device'
-        ? defaultDeviceName
-        : mapped?.target?.thingsBoardDeviceName
-    },
+    originator,
     gateway: {
       name: cfg.deviceName
     }
@@ -144,6 +145,8 @@ export function normalizeAlarmEvent(event: OpcUaAlarmEvent, cfg: EdgeConfig, now
 function meaningfulFingerprint(event: NormalizedAlarmEvent): string {
   return JSON.stringify({
     alarmType: event.alarmType,
+    eventId: event.eventId,
+    branchId: event.branchId,
     opcUaSeverity: event.opcUaSeverity,
     thingsBoardSeverity: event.thingsBoardSeverity,
     active: event.active,
@@ -161,6 +164,7 @@ function meaningfulFingerprint(event: NormalizedAlarmEvent): string {
 export class ThingsBoardAlarmRestSync {
   private readonly active = new Map<string, TrackedAlarm>();
   private readonly fingerprints = new Map<string, string>();
+  private readonly obsoleteAlarmIds = new Set<string>();
   private readonly deviceIdsByName = new Map<string, string>();
   private readonly baseUrl: string;
   private readonly statePath: string;
@@ -196,6 +200,7 @@ export class ThingsBoardAlarmRestSync {
   reconcile(snapshot: OpcUaAlarmEvent[]): Promise<void> {
     return this.enqueue(async () => {
       await this.load();
+      await this.clearObsoleteBranchAlarms();
       const seen = new Set<string>();
       for (const input of snapshot) {
         const event = normalizeAlarmEvent(input, this.cfg);
@@ -267,15 +272,19 @@ export class ThingsBoardAlarmRestSync {
     }
 
     const originator = await this.resolveOriginator(event);
+    const existingAlarmId = previous?.alarmId;
     const alarm = await this.request<ThingsBoardAlarm>('/api/alarm', {
       method: 'POST',
       body: JSON.stringify({
+        ...(existingAlarmId
+          ? { id: { entityType: 'ALARM', id: existingAlarmId } }
+          : {}),
         originator,
         type: event.alarmType,
         severity: event.thingsBoardSeverity,
         acknowledged: event.acknowledged,
         cleared: false,
-        startTs: event.eventTs,
+        startTs: previous?.event.eventTs || event.eventTs,
         endTs: event.receiveTs,
         details: {
           managedBy: 'twynix-gateway',
@@ -445,13 +454,31 @@ export class ThingsBoardAlarmRestSync {
     try {
       const raw = await fs.readJson(this.statePath) as any;
       const entries = raw?.active && typeof raw.active === 'object' ? Object.entries(raw.active) : [];
-      for (const [identity, value] of entries) {
+      for (const [, value] of entries) {
         const tracked = value && (value as any).event
           ? value as TrackedAlarm
           : { event: value as NormalizedAlarmEvent };
         if (!tracked.event?.active || tracked.event.schemaVersion !== EVENT_SCHEMA_VERSION) continue;
-        this.active.set(identity, tracked);
-        this.fingerprints.set(identity, meaningfulFingerprint(tracked.event));
+        const conditionId = String(tracked.event.conditionId || '').trim();
+        if (!conditionId) continue;
+        const migratedEvent: NormalizedAlarmEvent = {
+          ...tracked.event,
+          conditionId,
+          identity: stableIdentity(conditionId, tracked.event.originator),
+          alarmType: `OPC UA ${conditionId}`
+        };
+        const requiresRestIdentityUpdate =
+          tracked.event.identity !== migratedEvent.identity ||
+          tracked.event.alarmType !== migratedEvent.alarmType;
+        const migrated: TrackedAlarm = { ...tracked, event: migratedEvent };
+        const existing = this.active.get(migratedEvent.identity);
+        if (existing?.alarmId && existing.alarmId !== migrated.alarmId) {
+          this.obsoleteAlarmIds.add(existing.alarmId);
+        }
+        this.active.set(migratedEvent.identity, migrated);
+        if (!requiresRestIdentityUpdate) {
+          this.fingerprints.set(migratedEvent.identity, meaningfulFingerprint(migratedEvent));
+        }
       }
     } catch (error: any) {
       logger.warn({
@@ -459,6 +486,26 @@ export class ThingsBoardAlarmRestSync {
         statePath: this.statePath,
         error: error?.message || String(error)
       });
+    }
+  }
+
+  private async clearObsoleteBranchAlarms(): Promise<void> {
+    for (const alarmId of Array.from(this.obsoleteAlarmIds)) {
+      try {
+        await this.request(`/api/alarm/${encodeURIComponent(alarmId)}/clear`, { method: 'POST' });
+        this.obsoleteAlarmIds.delete(alarmId);
+        this.cleared += 1;
+        logger.info({
+          msg: 'Cleared obsolete branch-specific ThingsBoard alarm during identity migration',
+          alarmId
+        });
+      } catch (error: any) {
+        logger.warn({
+          msg: 'Unable to clear obsolete branch-specific ThingsBoard alarm',
+          alarmId,
+          error: error?.message || String(error)
+        });
+      }
     }
   }
 

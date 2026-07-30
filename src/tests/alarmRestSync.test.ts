@@ -74,9 +74,10 @@ async function fixture(overrides: Record<string, unknown> = {}) {
     const url = String(input);
     calls.push({ url, init });
     if (url.endsWith('/api/alarm') && init?.method === 'POST') {
-      created += 1;
+      const payload = JSON.parse(String(init.body));
+      const alarmId = String(payload.id?.id || `alarm-${++created}`);
       return new Response(JSON.stringify({
-        id: { entityType: 'ALARM', id: `alarm-${created}` },
+        id: { entityType: 'ALARM', id: alarmId },
         acknowledged: false,
         cleared: false
       }), { status: 200 });
@@ -129,17 +130,22 @@ function alarmPosts(calls: RestCall[]) {
   return calls.filter((call) => call.url.endsWith('/api/alarm') && call.init?.method === 'POST');
 }
 
-test('active OPC UA condition creates a native ThingsBoard alarm through REST once', async () => {
+test('first active event creates and repeated active event updates the same native alarm ID', async () => {
   const f = await fixture();
   try {
     const sync = new ThingsBoardAlarmRestSync(f.config, f.fetchImpl);
     await sync.process(alarm());
     await sync.process(alarm({ eventId: 'new-event-id', receiveTime: 1700000000200 }));
 
-    assert.equal(alarmPosts(f.calls).length, 1);
-    const request = alarmPosts(f.calls)[0];
+    assert.equal(alarmPosts(f.calls).length, 2);
+    const [request, updateRequest] = alarmPosts(f.calls);
     const payload = JSON.parse(String(request.init?.body));
+    const updatePayload = JSON.parse(String(updateRequest.init?.body));
     assert.deepEqual(payload.originator, { entityType: 'DEVICE', id: 'device-1' });
+    assert.equal(payload.id, undefined);
+    assert.deepEqual(updatePayload.id, { entityType: 'ALARM', id: 'alarm-1' });
+    assert.equal(updatePayload.type, payload.type);
+    assert.equal(updatePayload.details.eventId, 'new-event-id');
     assert.equal(payload.severity, 'CRITICAL');
     assert.equal(payload.details.conditionId, 'ns=1;s=A1.Temperature.Alarm');
     assert.equal(payload.details.managedBy, 'twynix-gateway');
@@ -147,7 +153,7 @@ test('active OPC UA condition creates a native ThingsBoard alarm through REST on
       (request.init?.headers as Record<string, string>)['X-Authorization'],
       'ApiKey alarm-api-key'
     );
-    assert.equal(sync.getDiagnostics().suppressed, 1);
+    assert.equal(sync.getDiagnostics().createdOrUpdated, 2);
   } finally {
     await f.close();
   }
@@ -165,6 +171,7 @@ test('meaningful severity update preserves the stable alarm type', async () => {
     const first = JSON.parse(String(posts[0].init?.body));
     const second = JSON.parse(String(posts[1].init?.body));
     assert.equal(first.type, second.type);
+    assert.deepEqual(second.id, { entityType: 'ALARM', id: 'alarm-1' });
     assert.equal(second.severity, 'MAJOR');
   } finally {
     await f.close();
@@ -189,7 +196,7 @@ test('inactive OPC UA condition clears the created ThingsBoard alarm', async () 
   }
 });
 
-test('condition refresh after restart suppresses unchanged active conditions', async () => {
+test('condition refresh after restart reconstructs by updating the persisted alarm ID', async () => {
   const f = await fixture();
   try {
     const first = new ThingsBoardAlarmRestSync(f.config, f.fetchImpl);
@@ -197,8 +204,43 @@ test('condition refresh after restart suppresses unchanged active conditions', a
     const restarted = new ThingsBoardAlarmRestSync(f.config, f.fetchImpl);
     await restarted.reconcile([alarm({ eventId: 'refresh-event', receiveTime: 1700000000300 })]);
 
-    assert.equal(alarmPosts(f.calls).length, 1);
+    const posts = alarmPosts(f.calls);
+    assert.equal(posts.length, 2);
+    const refreshed = JSON.parse(String(posts[1].init?.body));
+    assert.deepEqual(refreshed.id, { entityType: 'ALARM', id: 'alarm-1' });
+    assert.equal(refreshed.type, JSON.parse(String(posts[0].init?.body)).type);
     assert.equal(restarted.getDiagnostics().trackedActiveCount, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('legacy branch-specific persisted identity migrates by updating the same alarm ID', async () => {
+  const f = await fixture();
+  try {
+    const current = normalizeAlarmEvent(alarm({ branchId: 'branch-1' }), f.config);
+    await fs.writeJson(f.config.tb.alarmApi!.statePath!, {
+      schemaVersion: 'twynix.opcua-alarm-rest-state.v1',
+      active: {
+        'ns=1;s=A1.Temperature.Alarm|branch-1': {
+          alarmId: 'legacy-alarm-id',
+          originator: { entityType: 'DEVICE', id: 'device-1' },
+          event: {
+            ...current,
+            identity: 'ns=1;s=A1.Temperature.Alarm|branch-1',
+            alarmType: 'OPC UA Temperature limit alarm [old-branch-hash]'
+          }
+        }
+      }
+    });
+
+    const sync = new ThingsBoardAlarmRestSync(f.config, f.fetchImpl);
+    await sync.reconcile([alarm({ branchId: 'branch-1' })]);
+
+    const posts = alarmPosts(f.calls).map((call) => JSON.parse(String(call.init?.body)));
+    assert.equal(posts.length, 1);
+    assert.deepEqual(posts[0].id, { entityType: 'ALARM', id: 'legacy-alarm-id' });
+    assert.equal(posts[0].type, 'OPC UA ns=1;s=A1.Temperature.Alarm');
   } finally {
     await f.close();
   }
@@ -226,6 +268,40 @@ test('different OPC UA conditions have distinct stable alarm types', async () =>
       alarmType(alarm()),
       alarmType(alarm({ conditionId: 'ns=1;s=A1.Temperature.WarningAlarm' }))
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('branchId and eventId update details but never change alarm identity or type', async () => {
+  const f = await fixture();
+  try {
+    const sync = new ThingsBoardAlarmRestSync(f.config, f.fetchImpl);
+    await sync.process(alarm({ branchId: 'branch-1', eventId: 'event-1' }));
+    await sync.process(alarm({ branchId: 'branch-2', eventId: 'event-2' }));
+
+    const posts = alarmPosts(f.calls).map((call) => JSON.parse(String(call.init?.body)));
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].type, 'OPC UA ns=1;s=A1.Temperature.Alarm');
+    assert.equal(posts[1].type, posts[0].type);
+    assert.deepEqual(posts[1].id, { entityType: 'ALARM', id: 'alarm-1' });
+    assert.equal(posts[1].details.branchId, 'branch-2');
+    assert.equal(posts[1].details.eventId, 'event-2');
+    assert.equal(posts[1].details.identity, posts[0].details.identity);
+  } finally {
+    await f.close();
+  }
+});
+
+test('stable identity is originator plus conditionId', async () => {
+  const f = await fixture();
+  try {
+    const mapped = normalizeAlarmEvent(alarm(), f.config);
+    const fallback = normalizeAlarmEvent(alarm({ sourceNode: 'ns=1;s=Unmapped' }), f.config);
+
+    assert.equal(mapped.identity, 'mapped-device:device-1|ns=1;s=A1.Temperature.Alarm');
+    assert.equal(fallback.identity, 'gateway-device:Gateway A|ns=1;s=A1.Temperature.Alarm');
+    assert.equal(mapped.alarmType, fallback.alarmType);
   } finally {
     await f.close();
   }
