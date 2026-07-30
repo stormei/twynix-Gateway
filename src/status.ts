@@ -19,9 +19,13 @@ export function sanitizedConfigSummary(cfg: EdgeConfig) {
       cleanSession: cfg.tb.cleanSession,
       mappedDeviceTransport: cfg.tb.mappedDeviceTransport || 'gateway-api',
       deviceCredentialCount: cfg.tb.deviceCredentials?.length || 0,
-      alarmEventsEnabled: cfg.tb.alarmEvents?.enabled === true,
-      alarmEventTelemetryKey: cfg.tb.alarmEvents?.telemetryKey || 'twynix_opcua_alarm_event',
-      alarmTransport: 'thingsboard-rule-chain'
+      alarmApiEnabled: cfg.tb.alarmApi?.enabled === true,
+      alarmRestUrl: cfg.tb.alarmApi?.restUrl || '',
+      alarmAuthType: cfg.tb.alarmApi?.authType || 'api-key',
+      alarmCredentialConfigured: (cfg.tb.alarmApi?.authType || 'api-key') === 'jwt'
+        ? !!cfg.tb.alarmApi?.jwtToken
+        : !!cfg.tb.alarmApi?.apiKey,
+      alarmTransport: 'thingsboard-alarm-rest-api'
     },
     opcua: {
       url: cfg.opcua.url,
@@ -103,7 +107,7 @@ export function gatewayIdentityAttributes(cfg: EdgeConfig) {
         'opcua.mapping.sharedConfig',
         'opcua.alarms',
         'opcua.alarms.acknowledge',
-        'thingsboard.alarms.ruleChainEvents'
+        'thingsboard.alarms.restApi'
       ],
       opcuaEndpoints: [
         {
@@ -122,7 +126,7 @@ export function gatewayIdentityAttributes(cfg: EdgeConfig) {
       'opcua.mapping.sharedConfig',
       'opcua.alarms',
       'opcua.alarms.acknowledge',
-      'thingsboard.alarms.ruleChainEvents'
+      'thingsboard.alarms.restApi'
     ],
     'edge.opcuaEndpoints': [
       {

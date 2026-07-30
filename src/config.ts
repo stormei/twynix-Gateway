@@ -33,9 +33,14 @@ function buildDefaultConfig(): EdgeConfig {
       cleanSession: String(process.env.MQTT_CLEAN_SESSION || 'true') !== 'false',
       mappedDeviceTransport: (process.env.TB_MAPPED_DEVICE_TRANSPORT === 'device-sessions' ? 'device-sessions' : 'gateway-api'),
       deviceCredentials: parseDeviceCredentials(),
-      alarmEvents: {
-        enabled: String(process.env.TB_ALARM_EVENTS_ENABLED || 'false') === 'true',
-        telemetryKey: process.env.TB_ALARM_EVENT_TELEMETRY_KEY || 'twynix_opcua_alarm_event',
+      alarmApi: {
+        enabled: String(process.env.TB_ALARM_SYNC_ENABLED || process.env.TB_ALARM_API_ENABLED || 'false') === 'true',
+        restUrl: process.env.TB_REST_URL || '',
+        authType: process.env.TB_ALARM_AUTH_TYPE === 'jwt' ? 'jwt' : 'api-key',
+        apiKey: process.env.TB_API_KEY || '',
+        jwtToken: process.env.TB_JWT_TOKEN || '',
+        requestTimeoutMs: Number(process.env.TB_ALARM_REQUEST_TIMEOUT_MS || 10000),
+        defaultDeviceName: process.env.TB_ALARM_DEFAULT_DEVICE_NAME || process.env.DEVICE_NAME || 'Machine001',
         statePath: process.env.TB_ALARM_STATE_PATH || undefined,
         severityMapping: {
           criticalMin: Number(process.env.TB_ALARM_CRITICAL_MIN || 900),
@@ -61,7 +66,12 @@ function buildDefaultConfig(): EdgeConfig {
       securityMode: 'None',
       applicationUri: process.env.OPCUA_APPLICATION_URI || undefined,
       alarms: {
-        enabled: String(process.env.OPCUA_ALARMS_ENABLED || process.env.TB_ALARM_EVENTS_ENABLED || 'false') === 'true'
+        enabled: String(
+          process.env.OPCUA_ALARMS_ENABLED ||
+          process.env.TB_ALARM_SYNC_ENABLED ||
+          process.env.TB_ALARM_API_ENABLED ||
+          'false'
+        ) === 'true'
       }
     },
     mapping: defaultMapping.map(tag => normalizeMapping(tag)),
@@ -89,7 +99,7 @@ function normalizeConfig(cfg: EdgeConfig): EdgeConfig {
         : defaults.mapping;
   const { mappings: _discardOpcUaMappings, ...opcua } = (cfg.opcua || {}) as any;
   const {
-    alarmApi: legacyAlarmApi,
+    alarmApi: incomingAlarmApi,
     alarmEvents: incomingAlarmEvents,
     ...tb
   } = (cfg.tb || {}) as any;
@@ -103,13 +113,13 @@ function normalizeConfig(cfg: EdgeConfig): EdgeConfig {
       deviceCredentials: Array.isArray(cfg.tb?.deviceCredentials)
         ? cfg.tb.deviceCredentials.map((credential) => ({ ...credential }))
         : defaults.tb.deviceCredentials,
-      alarmEvents: {
-        ...defaults.tb.alarmEvents!,
-        ...(incomingAlarmEvents || {}),
-        enabled: incomingAlarmEvents?.enabled ?? legacyAlarmApi?.enabled ?? defaults.tb.alarmEvents!.enabled,
+      alarmApi: {
+        ...defaults.tb.alarmApi!,
+        ...(incomingAlarmApi || {}),
+        enabled: incomingAlarmApi?.enabled ?? defaults.tb.alarmApi!.enabled,
         severityMapping: {
-          ...defaults.tb.alarmEvents!.severityMapping!,
-          ...(incomingAlarmEvents?.severityMapping || {})
+          ...defaults.tb.alarmApi!.severityMapping!,
+          ...(incomingAlarmApi?.severityMapping || incomingAlarmEvents?.severityMapping || {})
         }
       }
     },
@@ -168,13 +178,15 @@ export async function loadConfig(): Promise<EdgeConfig> {
     });
     return cfg;
   }
-  const raw = await fs.readJson(CONFIG_PATH) as EdgeConfig & { tb?: EdgeConfig['tb'] & { alarmApi?: unknown } };
+  const raw = await fs.readJson(CONFIG_PATH) as EdgeConfig & {
+    tb?: EdgeConfig['tb'] & { alarmEvents?: unknown };
+  };
   const cfg = normalizeConfig(raw);
   validateConfig(cfg);
-  if (raw.tb?.alarmApi) {
+  if (raw.tb && 'alarmEvents' in raw.tb) {
     await saveConfig(cfg);
     logger.info({
-      msg: 'Migrated legacy REST alarm configuration to rule-chain alarm events and removed stored REST credential',
+      msg: 'Migrated rule-chain alarm settings to direct ThingsBoard Alarm REST API settings; REST sync remains disabled until credentials are configured',
       path: CONFIG_PATH
     });
   }
@@ -221,26 +233,43 @@ export function validateConfig(cfg: EdgeConfig) {
   if (cfg.tb.cleanSession !== undefined && typeof cfg.tb.cleanSession !== 'boolean') {
     throw new Error('tb.cleanSession must be a boolean');
   }
-  if (cfg.tb.alarmEvents?.enabled !== undefined && typeof cfg.tb.alarmEvents.enabled !== 'boolean') {
-    throw new Error('tb.alarmEvents.enabled must be a boolean');
+  if (cfg.tb.alarmApi?.enabled !== undefined && typeof cfg.tb.alarmApi.enabled !== 'boolean') {
+    throw new Error('tb.alarmApi.enabled must be a boolean');
   }
-  if (cfg.tb.alarmEvents?.telemetryKey !== undefined && !/^[A-Za-z0-9_.-]{1,128}$/.test(cfg.tb.alarmEvents.telemetryKey)) {
-    throw new Error('tb.alarmEvents.telemetryKey must contain only letters, numbers, dot, dash, or underscore');
+  if (cfg.tb.alarmApi?.enabled) {
+    if (!cfg.tb.alarmApi.restUrl || !/^https?:\/\//i.test(cfg.tb.alarmApi.restUrl)) {
+      throw new Error('tb.alarmApi.restUrl must be an http(s) URL when alarm synchronization is enabled');
+    }
+    if ((cfg.tb.alarmApi.authType || 'api-key') === 'api-key' && !cfg.tb.alarmApi.apiKey) {
+      throw new Error('tb.alarmApi.apiKey is required for API-key authentication');
+    }
+    if (cfg.tb.alarmApi.authType === 'jwt' && !cfg.tb.alarmApi.jwtToken) {
+      throw new Error('tb.alarmApi.jwtToken is required for JWT authentication');
+    }
   }
-  if (cfg.tb.alarmEvents?.statePath !== undefined && typeof cfg.tb.alarmEvents.statePath !== 'string') {
-    throw new Error('tb.alarmEvents.statePath must be a string');
+  if (cfg.tb.alarmApi?.authType !== undefined &&
+      cfg.tb.alarmApi.authType !== 'api-key' &&
+      cfg.tb.alarmApi.authType !== 'jwt') {
+    throw new Error('tb.alarmApi.authType must be api-key|jwt');
   }
-  if (cfg.tb.alarmEvents?.severityMapping) {
-    const severity = cfg.tb.alarmEvents.severityMapping;
+  if (cfg.tb.alarmApi?.requestTimeoutMs !== undefined &&
+      (!Number.isFinite(cfg.tb.alarmApi.requestTimeoutMs) || cfg.tb.alarmApi.requestTimeoutMs < 1000)) {
+    throw new Error('tb.alarmApi.requestTimeoutMs must be at least 1000');
+  }
+  if (cfg.tb.alarmApi?.statePath !== undefined && typeof cfg.tb.alarmApi.statePath !== 'string') {
+    throw new Error('tb.alarmApi.statePath must be a string');
+  }
+  if (cfg.tb.alarmApi?.severityMapping) {
+    const severity = cfg.tb.alarmApi.severityMapping;
     for (const [name, value] of Object.entries(severity)) {
       if (!Number.isFinite(value) || value < 0 || value > 1000) {
-        throw new Error(`tb.alarmEvents.severityMapping.${name} must be between 0 and 1000`);
+        throw new Error(`tb.alarmApi.severityMapping.${name} must be between 0 and 1000`);
       }
     }
     if (!(severity.criticalMin >= severity.majorMin &&
           severity.majorMin >= severity.warningMin &&
           severity.warningMin >= severity.minorMin)) {
-      throw new Error('tb.alarmEvents severity thresholds must be descending');
+      throw new Error('tb.alarmApi severity thresholds must be descending');
     }
   }
 

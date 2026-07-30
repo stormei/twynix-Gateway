@@ -157,9 +157,14 @@ export interface EdgeConfig {
     cleanSession?: boolean;
     mappedDeviceTransport?: 'gateway-api' | 'device-sessions';
     deviceCredentials?: DeviceCredential[];
-    alarmEvents?: {
+    alarmApi?: {
       enabled: boolean;
-      telemetryKey?: string;
+      restUrl: string;
+      authType?: 'api-key' | 'jwt';
+      apiKey?: string;
+      jwtToken?: string;
+      requestTimeoutMs?: number;
+      defaultDeviceName?: string;
       statePath?: string;
       severityMapping?: {
         criticalMin: number;

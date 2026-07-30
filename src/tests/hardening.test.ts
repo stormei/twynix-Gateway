@@ -15,9 +15,11 @@ function cfg(overrides: Partial<EdgeConfig> = {}): EdgeConfig {
       qos: 1,
       mappedDeviceTransport: 'gateway-api',
       deviceCredentials: [{ thingsBoardDeviceName: 'Pump A', accessToken: 'target-secret' }],
-      alarmEvents: {
+      alarmApi: {
         enabled: false,
-        telemetryKey: 'twynix_opcua_alarm_event'
+        restUrl: 'https://thingsboard.example',
+        authType: 'api-key',
+        apiKey: 'alarm-secret'
       }
     },
     opcua: {
@@ -51,27 +53,34 @@ test('gateway identity attributes publish sanitized config summary without secre
   assert.equal(text.includes('secret-token'), false);
   assert.equal(text.includes('target-secret'), false);
   assert.equal(text.includes('opc-secret'), false);
-  assert.equal(text.includes('twynix_opcua_alarm_event'), true);
+  assert.equal(text.includes('alarm-secret'), false);
+  assert.equal(attrs.edge.config.tb.alarmTransport, 'thingsboard-alarm-rest-api');
   assert.equal(attrs.edge.config.mqttFlushBatchSize, 200);
 });
 
-test('legacy REST alarm config migrates to credential-free rule-chain events', () => {
+test('rule-chain alarm config migrates to disabled direct REST settings without inventing credentials', () => {
   const current = cfg();
-  const legacy = cfg({
+  const migrated = cfg({
     tb: {
       ...current.tb,
-      alarmEvents: undefined,
-      alarmApi: {
+      alarmApi: undefined,
+      alarmEvents: {
         enabled: true,
-        restUrl: 'https://thingsboard.example',
-        apiKey: 'must-not-survive'
+        telemetryKey: 'twynix_opcua_alarm_event',
+        severityMapping: {
+          criticalMin: 950,
+          majorMin: 850,
+          warningMin: 650,
+          minorMin: 350
+        }
       }
     } as any
   });
 
-  assert.equal(legacy.tb.alarmEvents?.enabled, true);
-  assert.equal('alarmApi' in legacy.tb, false);
-  assert.equal(JSON.stringify(legacy).includes('must-not-survive'), false);
+  assert.equal(migrated.tb.alarmApi?.enabled, false);
+  assert.equal(migrated.tb.alarmApi?.severityMapping?.criticalMin, 950);
+  assert.equal(migrated.tb.alarmApi?.apiKey, '');
+  assert.equal('alarmEvents' in migrated.tb, false);
 });
 
 test('config restart scope hot-applies mapping and write interval changes only', () => {

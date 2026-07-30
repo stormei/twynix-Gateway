@@ -11,9 +11,14 @@
     "cleanSession": true,
     "mappedDeviceTransport": "gateway-api",
     "deviceCredentials": [],
-    "alarmEvents": {
+    "alarmApi": {
       "enabled": false,
-      "telemetryKey": "twynix_opcua_alarm_event",
+      "restUrl": "https://thingsboard.example.com",
+      "authType": "api-key",
+      "apiKey": "",
+      "jwtToken": "",
+      "requestTimeoutMs": 10000,
+      "defaultDeviceName": "Machine001",
       "statePath": "/data/opcua-alarm-state.json",
       "severityMapping": {
         "criticalMin": 900,

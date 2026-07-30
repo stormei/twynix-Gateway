@@ -466,7 +466,7 @@ export class GatewayRuntimeManager {
     if (!snapshot.opcua.subscription) alerts.push('OPCUA_SUBSCRIPTION_NOT_READY');
     if (Number(snapshot.mqtt.buffered || 0) > 0) alerts.push('BUFFERED_MESSAGES');
     if (Number(snapshot.delivery?.telemetryPublishFailures || 0) > 0) alerts.push('TELEMETRY_PUBLISH_FAILURES');
-    if (Number(snapshot.delivery?.alarmEventPublishFailures || 0) > 0) alerts.push('ALARM_EVENT_PUBLISH_FAILURES');
+    if (Number(snapshot.delivery?.alarmSyncFailures || 0) > 0) alerts.push('ALARM_SYNC_FAILURES');
     return Array.from(new Set(alerts));
   }
 
