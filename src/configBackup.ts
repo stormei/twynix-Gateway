@@ -47,7 +47,6 @@ function timestampFilePart(date = new Date()) {
 export function redactConfigSecrets(cfg: EdgeConfig): EdgeConfig {
   const redacted = JSON.parse(JSON.stringify(cfg)) as EdgeConfig;
   if (redacted.tb?.accessToken) redacted.tb.accessToken = '<redacted>';
-  if (redacted.tb?.alarmApi?.apiKey) redacted.tb.alarmApi.apiKey = '<redacted>';
   if (Array.isArray(redacted.tb?.deviceCredentials)) {
     redacted.tb.deviceCredentials = redacted.tb.deviceCredentials.map((credential) => ({
       ...credential,

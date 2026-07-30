@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "twynix.thingsboard-rule-chain.v1",
+  "name": "Twynix OPC UA native alarms",
+  "description": "Versioned node configuration manifest for the generic root-rule-chain branch. This is intentionally independent of ThingsBoard export IDs and layout coordinates.",
+  "telemetryKey": "twynix_opcua_alarm_event",
+  "attachTo": {
+    "ruleChain": "Root Rule Chain",
+    "fromNode": "Message Type Switch",
+    "relation": "Post telemetry",
+    "parallelWith": [
+      "Save Timeseries",
+      "Device Profile Node"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "hasTwynixAlarmEvent",
+      "type": "Check fields presence",
+      "configuration": {
+        "messageNames": [
+          "twynix_opcua_alarm_event"
+        ],
+        "metadataNames": [],
+        "checkAllKeys": true
+      }
+    },
+    {
+      "id": "unwrapTwynixAlarmEvent",
+      "type": "Script Transformation",
+      "configuration": {
+        "scriptLang": "TBEL",
+        "tbelScript": "var event = msg.twynix_opcua_alarm_event;\nreturn {msg: event, metadata: metadata, msgType: msgType};"
+      }
+    },
+    {
+      "id": "routeTwynixAlarmEvent",
+      "type": "Switch",
+      "configuration": {
+        "scriptLang": "TBEL",
+        "tbelScript": "var validSeverity = msg.thingsBoardSeverity == \"CRITICAL\" || msg.thingsBoardSeverity == \"MAJOR\" || msg.thingsBoardSeverity == \"MINOR\" || msg.thingsBoardSeverity == \"WARNING\" || msg.thingsBoardSeverity == \"INDETERMINATE\";\nif (msg.schemaVersion != \"twynix.opcua-alarm.v1\" || msg.alarmType == null || msg.identity == null || !validSeverity) {\n  return \"Malformed\";\n}\nreturn msg.active == true ? \"Active\" : \"Inactive\";"
+      }
+    },
+    {
+      "id": "buildThingsBoardAlarm",
+      "type": "Script Transformation",
+      "configuration": {
+        "scriptLang": "TBEL",
+        "tbelScript": "var alarm = {\n  type: msg.alarmType,\n  severity: msg.thingsBoardSeverity,\n  acknowledged: msg.acknowledged == true,\n  cleared: false,\n  startTs: msg.eventTs,\n  endTs: msg.receiveTs,\n  details: msg\n};\nreturn {msg: alarm, metadata: metadata, msgType: msgType};"
+      }
+    },
+    {
+      "id": "createOrUpdateThingsBoardAlarm",
+      "type": "Create Alarm",
+      "configuration": {
+        "scriptLang": "TBEL",
+        "alarmDetailsBuildTbel": "return msg.details;",
+        "alarmType": "Twynix OPC UA alarm",
+        "severity": "INDETERMINATE",
+        "useMessageAlarmData": true,
+        "overwriteAlarmDetails": false,
+        "dynamicSeverity": false,
+        "propagate": false,
+        "propagateToOwner": false,
+        "propagateToOwnerHierarchy": false,
+        "propagateToTenant": false,
+        "relationTypes": []
+      }
+    },
+    {
+      "id": "clearThingsBoardAlarm",
+      "type": "Clear Alarm",
+      "configuration": {
+        "scriptLang": "TBEL",
+        "alarmType": "${data.alarmType}",
+        "alarmDetailsBuildTbel": "return msg;"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "hasTwynixAlarmEvent",
+      "relation": "True",
+      "to": "unwrapTwynixAlarmEvent"
+    },
+    {
+      "from": "unwrapTwynixAlarmEvent",
+      "relation": "Success",
+      "to": "routeTwynixAlarmEvent"
+    },
+    {
+      "from": "routeTwynixAlarmEvent",
+      "relation": "Active",
+      "to": "buildThingsBoardAlarm"
+    },
+    {
+      "from": "buildThingsBoardAlarm",
+      "relation": "Success",
+      "to": "createOrUpdateThingsBoardAlarm"
+    },
+    {
+      "from": "routeTwynixAlarmEvent",
+      "relation": "Inactive",
+      "to": "clearThingsBoardAlarm"
+    }
+  ]
+}

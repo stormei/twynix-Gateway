@@ -136,7 +136,9 @@ export function toOpcUaAlarmEvent(alarm: ClientAlarm): OpcUaAlarmEvent {
       textValue(alarmField(alarm, 'activeState')),
     branchId: textValue(alarmField(alarm, 'branchId')) || undefined,
     time: timestampValue(time),
-    ...(receiveTime === undefined ? {} : { receiveTime: timestampValue(receiveTime) })
+    ...(receiveTime === undefined ? {} : { receiveTime: timestampValue(receiveTime) }),
+    quality: textValue(alarmField(alarm, 'quality')) || undefined,
+    status: textValue(alarmField(alarm, 'enabledState')) || undefined
   };
 }
 

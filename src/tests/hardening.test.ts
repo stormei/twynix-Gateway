@@ -15,10 +15,9 @@ function cfg(overrides: Partial<EdgeConfig> = {}): EdgeConfig {
       qos: 1,
       mappedDeviceTransport: 'gateway-api',
       deviceCredentials: [{ thingsBoardDeviceName: 'Pump A', accessToken: 'target-secret' }],
-      alarmApi: {
+      alarmEvents: {
         enabled: false,
-        restUrl: 'http://thingsboard:8080',
-        apiKey: 'alarm-api-secret'
+        telemetryKey: 'twynix_opcua_alarm_event'
       }
     },
     opcua: {
@@ -52,8 +51,27 @@ test('gateway identity attributes publish sanitized config summary without secre
   assert.equal(text.includes('secret-token'), false);
   assert.equal(text.includes('target-secret'), false);
   assert.equal(text.includes('opc-secret'), false);
-  assert.equal(text.includes('alarm-api-secret'), false);
+  assert.equal(text.includes('twynix_opcua_alarm_event'), true);
   assert.equal(attrs.edge.config.mqttFlushBatchSize, 200);
+});
+
+test('legacy REST alarm config migrates to credential-free rule-chain events', () => {
+  const current = cfg();
+  const legacy = cfg({
+    tb: {
+      ...current.tb,
+      alarmEvents: undefined,
+      alarmApi: {
+        enabled: true,
+        restUrl: 'https://thingsboard.example',
+        apiKey: 'must-not-survive'
+      }
+    } as any
+  });
+
+  assert.equal(legacy.tb.alarmEvents?.enabled, true);
+  assert.equal('alarmApi' in legacy.tb, false);
+  assert.equal(JSON.stringify(legacy).includes('must-not-survive'), false);
 });
 
 test('config restart scope hot-applies mapping and write interval changes only', () => {

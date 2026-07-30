@@ -1507,28 +1507,36 @@ export function renderAdminUi(): string {
                   Subscribe to OPC UA Alarms &amp; Conditions
                 </label>
                 <label class="checkbox">
-                  <input id="tbAlarmSyncEnabled" type="checkbox" />
-                  Create, update, acknowledge, and clear ThingsBoard alarms through REST
+                  <input id="tbAlarmEventsEnabled" type="checkbox" />
+                  Publish normalized alarm events for the ThingsBoard rule chain
                 </label>
                 <div class="form-grid">
                   <label>
-                    ThingsBoard REST URL
-                    <input class="form-control" id="tbAlarmRestUrl" placeholder="http://thingsboard:8080" />
+                    Alarm-event telemetry key
+                    <input class="form-control" id="tbAlarmTelemetryKey" placeholder="twynix_opcua_alarm_event" />
                   </label>
                   <label>
-                    Alarm REST API key
-                    <input class="form-control" id="tbAlarmApiKey" type="password" autocomplete="off" />
+                    Persisted alarm-state path
+                    <input class="form-control" id="tbAlarmStatePath" placeholder="/data/opcua-alarm-state.json" />
                   </label>
                   <label>
-                    Default alarm device name
-                    <input class="form-control" id="tbAlarmDefaultDeviceName" />
+                    CRITICAL minimum severity
+                    <input class="form-control" id="tbAlarmCriticalMin" type="number" min="0" max="1000" />
                   </label>
                   <label>
-                    REST request timeout (ms)
-                    <input class="form-control" id="tbAlarmRequestTimeoutMs" type="number" min="1000" max="120000" step="500" />
+                    MAJOR minimum severity
+                    <input class="form-control" id="tbAlarmMajorMin" type="number" min="0" max="1000" />
+                  </label>
+                  <label>
+                    WARNING minimum severity
+                    <input class="form-control" id="tbAlarmWarningMin" type="number" min="0" max="1000" />
+                  </label>
+                  <label>
+                    MINOR minimum severity
+                    <input class="form-control" id="tbAlarmMinorMin" type="number" min="0" max="1000" />
                   </label>
                 </div>
-                <p class="hint">Mapped OPC UA sources use their configured ThingsBoard device. The default device is used when no mapping matches.</p>
+                <p class="hint">Mapped OPC UA sources publish the event on their ThingsBoard device. Unmapped sources fall back to the gateway device. The ThingsBoard rule chain creates and clears native alarms.</p>
                 <div>
                   <button class="btn btn-primary" type="submit">Save alarm settings</button>
                 </div>
@@ -2085,10 +2093,12 @@ export function renderAdminUi(): string {
         document.getElementById('tbCaPath').value = cfg.tb.caPath || '';
         document.getElementById('tbCertPath').value = cfg.tb.certPath || '';
         document.getElementById('tbKeyPath').value = cfg.tb.keyPath || '';
-        document.getElementById('tbAlarmRestUrl').value = cfg.tb.alarmApi?.restUrl || '';
-        document.getElementById('tbAlarmApiKey').value = cfg.tb.alarmApi?.apiKey || '';
-        document.getElementById('tbAlarmDefaultDeviceName').value = cfg.tb.alarmApi?.defaultDeviceName || cfg.deviceName || '';
-        document.getElementById('tbAlarmRequestTimeoutMs').value = String(cfg.tb.alarmApi?.requestTimeoutMs ?? 10000);
+        document.getElementById('tbAlarmTelemetryKey').value = cfg.tb.alarmEvents?.telemetryKey || 'twynix_opcua_alarm_event';
+        document.getElementById('tbAlarmStatePath').value = cfg.tb.alarmEvents?.statePath || '';
+        document.getElementById('tbAlarmCriticalMin').value = String(cfg.tb.alarmEvents?.severityMapping?.criticalMin ?? 900);
+        document.getElementById('tbAlarmMajorMin').value = String(cfg.tb.alarmEvents?.severityMapping?.majorMin ?? 800);
+        document.getElementById('tbAlarmWarningMin').value = String(cfg.tb.alarmEvents?.severityMapping?.warningMin ?? 600);
+        document.getElementById('tbAlarmMinorMin').value = String(cfg.tb.alarmEvents?.severityMapping?.minorMin ?? 300);
         document.getElementById('writeMinIntervalMs').value = String(cfg.writeMinIntervalMs ?? 100);
         document.getElementById('mqttFlushBatchSize').value = String(cfg.mqttFlushBatchSize ?? 200);
         document.getElementById('mqttFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
@@ -2097,7 +2107,7 @@ export function renderAdminUi(): string {
         document.getElementById('throttleFlushDelayMs').value = String(cfg.mqttFlushDelayMs ?? 0);
         document.getElementById('throttleFlushIntervalMs').value = String(cfg.mqttFlushIntervalMs ?? 15000);
         document.getElementById('tbRejectUnauthorized').checked = cfg.tb.rejectUnauthorized !== false;
-        document.getElementById('tbAlarmSyncEnabled').checked = cfg.tb.alarmApi?.enabled === true;
+        document.getElementById('tbAlarmEventsEnabled').checked = cfg.tb.alarmEvents?.enabled === true;
 
         document.getElementById('opcUrl').value = cfg.opcua.url || '';
         document.getElementById('opcUsername').value = cfg.opcua.username || '';
@@ -2825,12 +2835,16 @@ export function renderAdminUi(): string {
           if (!state.authenticated) throw new AuthExpiredError();
           const patch = {
             tb: {
-              alarmApi: {
-                enabled: document.getElementById('tbAlarmSyncEnabled').checked,
-                restUrl: document.getElementById('tbAlarmRestUrl').value.trim(),
-                apiKey: document.getElementById('tbAlarmApiKey').value,
-                defaultDeviceName: document.getElementById('tbAlarmDefaultDeviceName').value.trim(),
-                requestTimeoutMs: Number(document.getElementById('tbAlarmRequestTimeoutMs').value)
+              alarmEvents: {
+                enabled: document.getElementById('tbAlarmEventsEnabled').checked,
+                telemetryKey: document.getElementById('tbAlarmTelemetryKey').value.trim(),
+                statePath: document.getElementById('tbAlarmStatePath').value.trim() || undefined,
+                severityMapping: {
+                  criticalMin: Number(document.getElementById('tbAlarmCriticalMin').value),
+                  majorMin: Number(document.getElementById('tbAlarmMajorMin').value),
+                  warningMin: Number(document.getElementById('tbAlarmWarningMin').value),
+                  minorMin: Number(document.getElementById('tbAlarmMinorMin').value)
+                }
               }
             },
             opcua: {

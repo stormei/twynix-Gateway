@@ -44,35 +44,37 @@ The gateway persists to `config.json` and confirms via client attributes `edge.c
 
 ## OPC UA alarms to ThingsBoard
 
-The gateway can subscribe to full OPC UA Alarm & Condition events and create, update, acknowledge, and
-clear ThingsBoard alarms directly. ThingsBoard alarm rules are not required for this mode.
+The gateway subscribes to native OPC UA Alarm & Condition events and publishes a normalized alarm
+event through the existing ThingsBoard MQTT connection. A generic ThingsBoard rule-chain branch
+converts those events into native ThingsBoard alarms. Normal tag telemetry is unchanged.
 
 Requirements:
 
 - An OPC UA server exposing `AlarmConditionType` conditions through the Server event notifier.
-- ThingsBoard 4.3 or later for long-lived REST API keys.
-- A scoped ThingsBoard API key allowed to read devices and manage alarms.
-- Each mapped OPC UA source should have a ThingsBoard target device ID or exact device name. Unmapped
-  alarm sources use `TB_ALARM_DEFAULT_DEVICE_NAME`.
+- The rule-chain branch documented in [`deploy/thingsboard/README.md`](deploy/thingsboard/README.md).
+- Each OPC UA source should have a ThingsBoard target mapping when its alarm must appear on a
+  machine/equipment device. Unmapped sources fall back to the gateway device.
 
 Enable the integration in `.env`:
 
 ```bash
 OPCUA_ALARMS_ENABLED=true
-TB_ALARM_SYNC_ENABLED=true
-TB_REST_URL=http://YOUR_THINGSBOARD_HOST:8080
-TB_API_KEY=YOUR_SCOPED_API_KEY
-TB_ALARM_DEFAULT_DEVICE_NAME=Machine001
+TB_ALARM_EVENTS_ENABLED=true
+TB_ALARM_EVENT_TELEMETRY_KEY=twynix_opcua_alarm_event
+TB_ALARM_STATE_PATH=/data/opcua-alarm-state.json
 ```
 
-The same settings are available under **Connectivity → Alarms** in the admin UI. This page also
-exposes the REST request timeout and applies the OPC UA and ThingsBoard alarm settings together.
+No ThingsBoard tenant/admin JWT or API key is stored in the gateway. The settings are also available
+under **Connectivity → Alarms** in the admin UI.
 
-The gateway performs an OPC UA Condition Refresh after connection and reconnection. Active conditions
-are restored in ThingsBoard, and stale gateway-managed ThingsBoard alarms are cleared when they are no
-longer present in the refreshed OPC UA condition set.
+The gateway performs OPC UA Condition Refresh after connection and reconnection. It persists the last
+active condition set under `/data`, suppresses repeated events with no meaningful state change, and
+publishes a clear event for a previously active condition missing from the refreshed snapshot.
+ThingsBoard's native alarm identity is message originator plus the stable `alarmType`, so repeat events
+update one active alarm rather than create duplicates.
 
-Severity mapping:
+Default severity mapping is aligned with Twynix simulator severities and is configurable in the admin
+UI or through `TB_ALARM_*_MIN` environment variables:
 
 ```text
 OPC UA >= 900  -> ThingsBoard CRITICAL
@@ -82,8 +84,11 @@ OPC UA >= 300  -> ThingsBoard MINOR
 lower/unknown  -> ThingsBoard INDETERMINATE
 ```
 
-Acknowledging an alarm in ThingsBoard is polled back to OPC UA every five seconds. The gateway also
-accepts this server-side RPC:
+The normalized event contains the OPC UA IDs, source, message, raw and mapped severity, condition
+state, acknowledgement/confirmation flags, retain flag, timestamps, quality/status, mapped
+originator, and gateway identity. The full contract is `NormalizedAlarmEvent` in `src/types.ts`.
+
+The gateway accepts this server-side RPC for OPC UA acknowledgement:
 
 ```json
 {
@@ -95,7 +100,8 @@ accepts this server-side RPC:
 }
 ```
 
-The REST API key is a secret. It is removed from redacted backups and diagnostic configuration summaries.
+Acknowledging a native alarm in ThingsBoard does not automatically invoke this RPC. Add an
+`ALARM_ACK` rule-chain-to-RPC branch if bidirectional acknowledgement is required.
 
 ## RPC writes
 

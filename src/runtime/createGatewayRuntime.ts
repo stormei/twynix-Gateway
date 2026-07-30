@@ -7,7 +7,7 @@ import { DeviceSessionRegistry } from '../tb/DeviceSessionRegistry.js';
 import { TbBridge } from '../tb/TbBridge.js';
 import { TelemetryPublisher } from '../tb/TelemetryPublisher.js';
 import { ThingsBoardGatewayApi } from '../tb/ThingsBoardGatewayApi.js';
-import { ThingsBoardAlarmSync } from '../tb/ThingsBoardAlarmSync.js';
+import { ThingsBoardAlarmEventPublisher } from '../tb/ThingsBoardAlarmEventPublisher.js';
 import { ConfigApplyStatus, DesiredConfigUpdate, EdgeConfig, RpcRequest, TagSpec } from '../types.js';
 import type { GatewayRuntime } from './GatewayRuntime.js';
 
@@ -56,11 +56,10 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
   const tbGateway = new ThingsBoardGatewayApi(mqtt, cfg.mapping, cfg.deviceName);
   let telemetryPublisher = new TelemetryPublisher(mqtt, devices, tbGateway, activeCfg.tb.mappedDeviceTransport || 'gateway-api');
   const opc = new OpcUaClient(cfg.opcua);
-  const alarmSync = cfg.tb.alarmApi?.enabled
-    ? new ThingsBoardAlarmSync(cfg, fetch, (conditionId, comment) => opc.acknowledgeAlarm(conditionId, comment))
+  let alarmPublisher = cfg.tb.alarmEvents?.enabled
+    ? new ThingsBoardAlarmEventPublisher(cfg, telemetryPublisher)
     : undefined;
   let statusInterval: NodeJS.Timeout | undefined;
-  let alarmAckInterval: NodeJS.Timeout | undefined;
   let opcSetupGeneration = 0;
   const deliveryMetrics = {
     opcSamplesReceived: 0,
@@ -74,10 +73,10 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
     lastTelemetryKey: null as string | null,
     lastTelemetryTarget: null as string | null,
     opcAlarmEventsReceived: 0,
-    alarmSyncSuccess: 0,
-    alarmSyncFailures: 0,
-    lastAlarmSyncAt: null as number | null,
-    lastAlarmSyncError: null as string | null
+    alarmEventPublishSuccess: 0,
+    alarmEventPublishFailures: 0,
+    lastAlarmEventPublishAt: null as number | null,
+    lastAlarmEventPublishError: null as string | null
   };
 
   try {
@@ -123,26 +122,26 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
           await opc.connect();
         }
 
-        if (activeCfg.opcua.alarms?.enabled && alarmSync) {
+        if (activeCfg.opcua.alarms?.enabled && alarmPublisher) {
           await opc.subscribeAlarms(
             async (alarm) => {
               deliveryMetrics.opcAlarmEventsReceived += 1;
               try {
-                await alarmSync.process(alarm);
-                deliveryMetrics.alarmSyncSuccess += 1;
-                deliveryMetrics.lastAlarmSyncAt = Date.now();
-                deliveryMetrics.lastAlarmSyncError = null;
+                await alarmPublisher!.process(alarm);
+                deliveryMetrics.alarmEventPublishSuccess += 1;
+                deliveryMetrics.lastAlarmEventPublishAt = Date.now();
+                deliveryMetrics.lastAlarmEventPublishError = null;
               } catch (error: any) {
-                deliveryMetrics.alarmSyncFailures += 1;
-                deliveryMetrics.lastAlarmSyncError = error?.message || String(error);
+                deliveryMetrics.alarmEventPublishFailures += 1;
+                deliveryMetrics.lastAlarmEventPublishError = error?.message || String(error);
                 logger.error({
-                  msg: 'OPC UA alarm synchronization failed',
+                  msg: 'OPC UA normalized alarm event publish failed',
                   conditionId: alarm.conditionId,
-                  error: deliveryMetrics.lastAlarmSyncError
+                  error: deliveryMetrics.lastAlarmEventPublishError
                 });
               }
             },
-            (activeAlarms) => alarmSync.reconcile(activeAlarms)
+            (activeAlarms) => alarmPublisher!.reconcile(activeAlarms)
           );
         }
       })();
@@ -239,14 +238,6 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
         logger.warn({ msg: 'Gateway status telemetry publish failed', error: error?.message || String(error) });
       });
     }, 30_000);
-    if (alarmSync) {
-      alarmAckInterval = setInterval(() => {
-        alarmSync.pollAcknowledgements().catch((error: any) => {
-          logger.warn({ msg: 'ThingsBoard alarm acknowledgement poll failed', error: error?.message || String(error) });
-        });
-      }, 5000);
-    }
-
     const runtimeObject: GatewayRuntime = {
       cfg: activeCfg,
       mqtt,
@@ -256,7 +247,7 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       getRpcStats: () => rpcExec.getStats(),
       getDeliveryMetrics: () => ({
         ...deliveryMetrics,
-        alarmSync: alarmSync?.getDiagnostics() || { enabled: false }
+        alarmEvents: alarmPublisher?.getDiagnostics() || { enabled: false }
       }),
       updateConfigHot: async (nextCfg: EdgeConfig) => {
         activeCfg = nextCfg;
@@ -271,6 +262,9 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
         tbGateway.setMappings(activeCfg.mapping);
         await tbGateway.connectMappedDevices();
         telemetryPublisher = new TelemetryPublisher(mqtt, devices, tbGateway, activeCfg.tb.mappedDeviceTransport || 'gateway-api');
+        alarmPublisher = activeCfg.tb.alarmEvents?.enabled
+          ? new ThingsBoardAlarmEventPublisher(activeCfg, telemetryPublisher)
+          : undefined;
         rpcExec = new RpcExecutor(activeCfg, opc, activeCfg.mapping, {
           writeTimeoutMs: 8000,
           maxPendingTotal: 500
@@ -282,7 +276,6 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
       close: async () => {
         logger.info({ msg: 'Closing runtime', deviceName: cfg.deviceName, tbUrl: cfg.tb.url, opcuaUrl: cfg.opcua.url });
         if (statusInterval) clearInterval(statusInterval);
-        if (alarmAckInterval) clearInterval(alarmAckInterval);
         tb.close();
         devices.close();
         await opc.close();
@@ -293,7 +286,6 @@ export async function createGatewayRuntime(cfg: EdgeConfig, handlers: RuntimeHan
     return runtimeObject;
   } catch (error) {
     if (statusInterval) clearInterval(statusInterval);
-    if (alarmAckInterval) clearInterval(alarmAckInterval);
     tb.close();
     devices.close();
     await opc.close().catch(() => undefined);

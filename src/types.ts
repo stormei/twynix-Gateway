@@ -47,6 +47,42 @@ export interface OpcUaAlarmEvent {
   branchId?: string;
   time: number;
   receiveTime?: number;
+  quality?: string;
+  status?: string;
+}
+
+export interface NormalizedAlarmEvent {
+  schemaVersion: 'twynix.opcua-alarm.v1';
+  identity: string;
+  alarmType: string;
+  eventId: string;
+  conditionId: string;
+  branchId?: string;
+  eventType: string;
+  sourceNodeId: string;
+  sourceName: string;
+  conditionName: string;
+  message: string;
+  opcUaSeverity: number;
+  thingsBoardSeverity: ThingsBoardAlarmSeverity;
+  active: boolean;
+  acknowledged: boolean;
+  confirmed?: boolean;
+  retain: boolean;
+  state?: string;
+  eventTs: number;
+  receiveTs: number;
+  quality?: string;
+  status?: string;
+  originator: {
+    mode: MappingTargetMode;
+    deviceId?: string;
+    deviceName?: string;
+  };
+  gateway: {
+    id?: string;
+    name: string;
+  };
 }
 
 export interface TagSpec {
@@ -121,12 +157,16 @@ export interface EdgeConfig {
     cleanSession?: boolean;
     mappedDeviceTransport?: 'gateway-api' | 'device-sessions';
     deviceCredentials?: DeviceCredential[];
-    alarmApi?: {
+    alarmEvents?: {
       enabled: boolean;
-      restUrl: string;
-      apiKey: string;
-      requestTimeoutMs?: number;
-      defaultDeviceName?: string;
+      telemetryKey?: string;
+      statePath?: string;
+      severityMapping?: {
+        criticalMin: number;
+        majorMin: number;
+        warningMin: number;
+        minorMin: number;
+      };
     };
   };
   opcua: {
